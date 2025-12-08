@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use crate::artifacts::ArtifactKind;
 use crate::bundle::{BundleDecode, BundleEncode, BundleSink};
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
-use burn::record::{
+use crate::burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
-use burn::tensor::backend::Backend;
+use crate::burn::tensor::backend::Backend;
 use serde::Deserialize;
 use serde::{Serialize, de::DeserializeOwned};
 

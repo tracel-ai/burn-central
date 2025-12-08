@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use burn::train::logger::MetricLogger;
-use burn::train::metric::store::{EpochSummary, Split};
-use burn::train::metric::{
+use crate::burn::train::logger::MetricLogger;
+use crate::burn::train::metric::store::{EpochSummary, Split};
+use crate::burn::train::metric::{
     MetricAttributes, MetricDefinition, MetricEntry, MetricId, NumericEntry,
 };
 use burn_central_client::websocket::MetricLog;
@@ -87,7 +87,7 @@ impl MetricLogger for RemoteMetricLogger {
         Ok(vec![]) // Not implemented
     }
 
-    fn log_metric_definition(&mut self, definition: burn::train::metric::MetricDefinition) {
+    fn log_metric_definition(&mut self, definition: crate::burn::train::metric::MetricDefinition) {
         self.metric_definitions
             .insert(definition.metric_id.clone(), definition.clone());
 

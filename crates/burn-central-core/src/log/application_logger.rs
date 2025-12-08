@@ -103,7 +103,7 @@ impl std::io::Write for RemoteWriter {
     }
 }
 
-impl burn::train::ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
+impl crate::burn::train::ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
     fn install(&self) -> Result<(), String> {
         let make_writer = RemoteWriterMaker {
             experiment_handle: self.experiment_handle.clone(),
