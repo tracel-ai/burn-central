@@ -18,8 +18,6 @@ keywords = ["tracel", "burn-central", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { version = "0.20.0-pre.4", default-features = false, features = ["train"]  }
-
 anyhow = "1.0.98"
 toml = "0.8.22"
 clap = { version = "4.5.39", features = ["derive"] }

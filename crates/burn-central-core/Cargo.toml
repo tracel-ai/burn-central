@@ -11,8 +11,16 @@ readme.workspace = true
 version.workspace = true
 rust-version.workspace = true
 
+#[features]
+#default = []
+#burn_0_19 = ["dep:burn_0_19"]  # Enable the burn_0_19 dependency
+#burn_0_20 = ["dep:burn_0_20"]  # Enable the burn_0_20 dependency
+#
 [dependencies]
-burn.workspace = true
+#burn_0_19 = { package = "burn", version = "=0.19", optional = true }
+#burn_0_20 = { package = "burn", version = "=0.20.0-pre.5", optional = true }
+burn = { version = "0.20.0-pre.4", default-features = false, features = ["train"]  }
+
 log.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -31,5 +39,5 @@ json-patch.workspace = true
 burn-central-client.workspace = true
 
 [dev-dependencies]
-burn = { workspace = true, features = ["ndarray"] }
+burn = { version = "0.20.0-pre.4", default-features = false, features = ["ndarray"]  }
 anyhow = { workspace = true }
