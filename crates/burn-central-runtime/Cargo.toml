@@ -14,7 +14,6 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 burn-central-core.workspace = true
-burn.workspace = true
 thiserror.workspace = true
 variadics_please.workspace = true
 syn.workspace = true
@@ -28,5 +27,4 @@ log.workspace = true
 crossbeam.workspace = true
 
 [dev-dependencies]
-burn = { workspace = true, features = ["ndarray"] }
 serde.workspace = true

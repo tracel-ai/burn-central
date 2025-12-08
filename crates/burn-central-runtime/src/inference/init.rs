@@ -1,4 +1,4 @@
-use burn::prelude::Backend;
+use burn_central_core::burn::prelude::Backend;
 
 /// Trait for models that can be initialized from user-defined arguments.
 pub trait Init<B, InitArgs = ()>: Sized

@@ -14,3 +14,5 @@ pub use burn_central_client::BurnCentralCredentials;
 pub mod artifacts;
 pub mod bundle;
 pub mod models;
+
+pub use burn;

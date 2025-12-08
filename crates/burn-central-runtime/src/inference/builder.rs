@@ -1,7 +1,7 @@
 use super::core::Inference;
 use super::job::JobHandle;
 use crate::input::RoutineInput;
-use burn::prelude::Backend;
+use burn_central_core::burn::prelude::Backend;
 use std::marker::PhantomData;
 
 /// Builder returned by [`Inference::infer`] allowing configuration (devices, state) before

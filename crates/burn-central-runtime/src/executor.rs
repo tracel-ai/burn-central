@@ -1,14 +1,14 @@
 use anyhow::Result;
-use burn::prelude::Backend;
 use burn_central_core::artifacts::ArtifactError;
 use burn_central_core::bundle::BundleDecode;
+use burn_central_core::burn::prelude::Backend;
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
 use crate::param::RoutineParam;
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
-use burn::tensor::backend::AutodiffBackend;
 use burn_central_core::BurnCentral;
+use burn_central_core::burn::tensor::backend::AutodiffBackend;
 use burn_central_core::experiment::{
     ExperimentArgs, ExperimentRun, deserialize_and_merge_with_default,
 };
@@ -318,10 +318,11 @@ mod test {
     use crate::{Args, Model, MultiDevice};
 
     use super::*;
-    use burn::backend::{Autodiff, NdArray};
-    use burn::nn::{Linear, LinearConfig};
-    use burn::prelude::*;
     use burn_central_core::bundle::{BundleEncode, BundleSink};
+    use burn_central_core::burn;
+    use burn_central_core::burn::backend::{Autodiff, NdArray};
+    use burn_central_core::burn::nn::{Linear, LinearConfig};
+    use burn_central_core::burn::prelude::*;
     use serde::{Deserialize, Serialize};
 
     impl<B: AutodiffBackend> ExecutorBuilder<B> {
