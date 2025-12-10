@@ -11,6 +11,11 @@ readme.workspace = true
 version.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["burn_0_19"]
+burn_0_19 = ["burn-central-core/burn_0_19", "burn-central-runtime/burn_0_19"]
+burn_0_20 = ["burn-central-core/burn_0_20", "burn-central-runtime/burn_0_20"]
+
 [dependencies]
 burn-central-core.workspace = true
 burn-central-macros.workspace = true
