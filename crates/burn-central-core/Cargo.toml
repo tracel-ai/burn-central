@@ -12,7 +12,7 @@ version.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = ["burn_0_20"]
 burn_0_19 = ["dep:burn_0_19"]
 burn_0_20 = ["dep:burn_0_20"] 
 
