@@ -1,4 +1,3 @@
-use crate::burn::train::logger::MetricLogger;
 use crate::burn::train::metric::{MetricEntry, NumericEntry};
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
@@ -23,7 +22,7 @@ impl RemoteMetricLogger {
     }
 }
 
-impl MetricLogger for RemoteMetricLogger {
+impl burn_0_19::train::logger::MetricLogger for RemoteMetricLogger {
     fn log(&mut self, _entry: &MetricEntry) {
         // No-op: Burn 0.19 stub implementation
     }

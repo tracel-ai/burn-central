@@ -17,7 +17,7 @@ burn_0_19 = ["dep:burn_0_19"]
 burn_0_20 = ["dep:burn_0_20"] 
 
 [dependencies]
-burn_0_19 = { package = "burn", version = "=0.19", optional = true, default-features = false, features = ["train"] }
+burn_0_19 = { package = "burn", version = "0.19.1", optional = true, default-features = false, features = ["train"] }
 burn_0_20 = { package = "burn", version = "=0.20.0-pre.5", optional = true, default-features = false, features = ["train"] }
 
 log.workspace = true
