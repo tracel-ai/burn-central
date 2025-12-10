@@ -3,14 +3,12 @@ use crate::inference::core::InferenceBuilder;
 use crate::inference::init::Init;
 use crate::inference::streaming::OutStream;
 use crate::{CancelToken, In, MultiDevice, Out, State};
-use burn_central_core::burn::backend::NdArray;
-use burn_central_core::burn::config::Config;
-use burn_central_core::burn::nn::{Linear, LinearConfig};
-use burn_central_core::burn::prelude::{Backend, Module};
-use burn_central_core::burn::record::{FullPrecisionSettings, NamedMpkBytesRecorder, Recorder};
-use burn_central_core::burn::tensor::Tensor;
-
-use burn_central_core::burn;
+use burn::backend::NdArray;
+use burn::config::Config;
+use burn::nn::{Linear, LinearConfig};
+use burn::prelude::{Backend, Module};
+use burn::record::{FullPrecisionSettings, NamedMpkBytesRecorder, Recorder};
+use burn::tensor::Tensor;
 
 type TestBackend = NdArray;
 type Device = <TestBackend as Backend>::Device;

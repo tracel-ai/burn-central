@@ -352,6 +352,7 @@ name = "burn-central-runtime"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "burn 0.20.0-pre.5",
  "burn-central-core",
  "clap",
  "crossbeam",
