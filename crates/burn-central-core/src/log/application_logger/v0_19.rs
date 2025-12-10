@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
+use burn::train::ApplicationLoggerInstaller;
 use tracing_subscriber::fmt::MakeWriter;
 
 use tracing_core::{Level, LevelFilter};
@@ -103,7 +104,7 @@ impl std::io::Write for RemoteWriter {
     }
 }
 
-impl crate::burn::train::ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
+impl ApplicationLoggerInstaller for RemoteExperimentLoggerInstaller {
     fn install(&self) -> Result<(), String> {
         let make_writer = RemoteWriterMaker {
             experiment_handle: self.experiment_handle.clone(),
