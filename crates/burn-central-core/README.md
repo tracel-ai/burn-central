@@ -32,27 +32,12 @@ burn-central-core = { version = "0.3", default-features = false, features = ["bu
 
 ### Development
 
-To verify both versions compile correctly:
-
-```bash
-# From the SDK root directory
-./scripts/check-all-versions.sh
-```
-
-To test both versions:
-
-```bash
-./scripts/test-all-versions.sh
-```
-
-Or manually:
-
 ```bash
 # Check/test Burn 0.20
-cargo check -p burn-central-core --features burn_0_20 --no-default-features
-cargo test -p burn-central-core --features burn_0_20 --no-default-features
+cargo check -p burn-central --features burn_0_20 --no-default-features
+cargo test -p burn-central --features burn_0_20 --no-default-features
 
 # Check/test Burn 0.19
-cargo check -p burn-central-core --features burn_0_19 --no-default-features
-cargo test -p burn-central-core --features burn_0_19 --no-default-features
+cargo check -p burn-central --features burn_0_19 --no-default-features
+cargo test -p burn-central --features burn_0_19 --no-default-features
 ```
