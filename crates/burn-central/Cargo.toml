@@ -11,9 +11,6 @@ readme.workspace = true
 version.workspace = true
 rust-version.workspace = true
 
-[features]
-_inference_beta = []
-
 [dependencies]
 burn-central-core.workspace = true
 burn-central-macros.workspace = true

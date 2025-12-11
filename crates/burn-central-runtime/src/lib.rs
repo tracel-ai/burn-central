@@ -16,7 +16,6 @@
 
 mod error;
 mod executor;
-mod inference;
 mod input;
 mod output;
 mod param;
@@ -24,9 +23,9 @@ mod routine;
 mod type_name;
 mod types;
 
+// TODO: document inference module (probably should use the module instead)
 #[doc(hidden)]
-#[cfg(_inference_beta)]
-pub use inference::*;
+pub mod inference;
 
 // Hide element that are only used internally by the gen crate.
 #[doc(hidden)]
