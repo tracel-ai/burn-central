@@ -75,7 +75,7 @@ burn-central-runtime = { version = "0.3.0", path = "crates/burn-central-runtime"
 burn-central-macros = { version = "0.3.0", path = "crates/burn-central-macros" }
 
 ### For xtask crate ###
-tracel-xtask = { version = "4.5.0" }
+tracel-xtask = { version = "4.8.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
