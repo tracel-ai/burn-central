@@ -11,6 +11,8 @@
 //! 3. Start a job with [`Inference::infer`], then either `.run()` (collect all outputs) or `.spawn()` (stream them).
 //! 4. Optionally cancel a spawned job via [`JobHandle::cancel`].
 
+#![allow(dead_code, unused_imports)]
+
 mod builder;
 mod context;
 mod core;

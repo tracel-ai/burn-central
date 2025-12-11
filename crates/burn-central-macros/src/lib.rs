@@ -1,3 +1,25 @@
+//! # Burn Central Macros
+//! As define in the burn central crate documentation, this crate provide the macros to
+//! register a functions. You probably don't need more information to it then that, but if you
+//! do we got you covered.
+//!
+//! ## Role and responsablity
+//! The role of the macros is really light weight. We don't want to make the register crate the
+//! hearth of our runtime. So it simply wrap your function into another functions define in the
+//! runtime and the runtime does the rest of the magic.
+//!
+//! ## Usage
+//! To use the macros you simply need to import it from this crate and use the `register` macro
+//! to mark your training and inference functions. Here is an exemple:
+//! ```rust
+//! use burn_central::macros::register;
+//!
+//! #[register(training, name = "my_training_procedure")]
+//! async fn my_training_function() {
+//!  // Your training code here
+//! }
+//! ```
+
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
@@ -7,7 +29,7 @@ use syn::{Error, ItemFn, Meta, Path, parse_macro_input, punctuated::Punctuated, 
 
 #[derive(Eq, Hash, PartialEq, Display)]
 #[strum(serialize_all = "PascalCase")]
-pub(crate) enum ProcedureType {
+enum ProcedureType {
     Training,
     Inference,
 }
@@ -40,7 +62,7 @@ fn compile_errors(errors: Vec<Error>) -> proc_macro2::TokenStream {
         .collect()
 }
 
-pub(crate) fn generate_flag_register_stream(
+fn generate_flag_register_stream(
     item: &ItemFn,
     builder_fn_ident: &Ident,
     procedure_type: &ProcedureType,
@@ -134,6 +156,7 @@ fn validate_registered_name(name: &str) -> Result<(), String> {
 }
 
 #[proc_macro_attribute]
+/// Macro to register your training and inference functions.
 pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut errors = Vec::<Error>::new();
     let args = parse_macro_input!(args with Punctuated::<Meta, syn::Token![,]>::parse_terminated);

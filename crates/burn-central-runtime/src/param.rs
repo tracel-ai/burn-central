@@ -1,5 +1,7 @@
-use crate::ExecutionContext;
-use crate::types::{Args, Model, MultiDevice};
+use crate::{
+    executor::ExecutionContext,
+    types::{Args, Model, MultiDevice},
+};
 use anyhow::Result;
 use burn::module::Module;
 use burn::prelude::Backend;

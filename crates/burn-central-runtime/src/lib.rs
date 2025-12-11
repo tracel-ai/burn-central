@@ -1,3 +1,15 @@
+//! # Burn Central Runtime
+//!
+//! This crate is the middle layer of the Burn Central SDK. It communicate directly with the
+//! generate crate created by Burn Central CLI and provide the necessary building block to execute
+//! training and inference routines.
+//!
+//! # Features
+//! - Extractor for training and inference arguments.
+//! - Wrapper for return type of training and inference routines.
+//! - Executor to run training and inference routines.
+//! - Error handling for runtime execution.
+
 mod error;
 mod executor;
 mod inference;
@@ -8,18 +20,10 @@ mod routine;
 mod type_name;
 mod types;
 
+#[doc(hidden)]
 pub mod cli;
 
-pub use error::RuntimeError;
-pub use executor::{ArtifactLoader, ExecutionContext, Executor, ExecutorBuilder};
-pub use inference::*;
-pub use routine::{IntoRoutine, Routine};
-pub use types::*;
-
-pub fn setup_logging() {
-    env_logger::builder()
-        .filter_module("burn_central", log::LevelFilter::Info)
-        .filter_module("burn_central_client", log::LevelFilter::Info)
-        .filter_module("burn_central_runtime", log::LevelFilter::Info)
-        .init();
-}
+#[doc(inline)]
+pub use executor::{ArtifactLoader, Executor, ExecutorBuilder};
+#[doc(inline)]
+pub use types::{Args, Model, MultiDevice};

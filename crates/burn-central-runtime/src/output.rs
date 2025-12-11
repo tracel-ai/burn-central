@@ -1,4 +1,4 @@
-use crate::ExecutionContext;
+use crate::executor::ExecutionContext;
 use crate::types::Model;
 use burn::prelude::Backend;
 use burn_central_core::artifacts::ArtifactKind;

@@ -47,41 +47,15 @@
 //!
 
 /// This modules is the heart of the SDK as it interface with the Burn Central platform API.
-pub mod core {
-    pub use burn_central_core::*;
-}
+#[doc(inline)]
+pub use burn_central_core as core;
 
 /// This crate provide the register macros. It allow user to mark there training functions so they
 /// can be found by Burn Central CLI.
-pub mod macros {
-    //! # Burn Central Macros
-    //! As define in the burn central crate documentation, this crate provide the macros to
-    //! register a functions. You probably don't need more information to it then that, but if you
-    //! do we got you covered.
-    //!
-    //! ## Role and responsablity
-    //! The role of the macros is really light weight. We don't want to make the register crate the
-    //! hearth of our runtime. So it simply wrap your function into another functions define in the
-    //! runtime and the runtime does the rest of the magic.
-    //!
-    //! ## Usage
-    //! To use the macros you simply need to import it from this crate and use the `register` macro
-    //! to mark your training and inference functions. Here is an exemple:
-    //! ```rust
-    //! use burn_central::macros::register;
-    //!
-    //! #[register(training, name = "my_training_procedure")]
-    //! async fn my_training_function() {
-    //!  // Your training code here
-    //! }
-    //! ```
-
-    /// Macro to register your training and inference functions.
-    pub use burn_central_macros::register;
-}
+#[doc(inline)]
+pub use burn_central_macros as macros;
 
 /// The runtime crate execute training and inference procedure registered with
 /// Burn Central Macros. It basicly form a wrapper crate that use your declare fucntions.
-pub mod runtime {
-    pub use burn_central_runtime::*;
-}
+#[doc(inline)]
+pub use burn_central_runtime as runtime;

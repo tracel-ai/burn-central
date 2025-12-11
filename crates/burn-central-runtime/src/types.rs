@@ -8,6 +8,7 @@ pub struct Args<T: ExperimentArgs>(pub T);
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 #[derive(Clone, From, Deref)]
 pub struct Model<M>(pub M);
+
 #[derive(Debug, Deref, From)]
 pub struct In<T>(pub T);
 #[derive(Debug, Deref, From)]

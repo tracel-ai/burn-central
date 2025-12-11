@@ -1,6 +1,8 @@
 use clap::{Args, Parser};
 
 #[derive(Args, Debug)]
+/// Burn Central configuration arguments. Those are declare here as the CLI is not a library that
+/// can be used in the generated crate.
 pub struct BurnCentralArgs {
     #[arg(long, default_value = "default")]
     pub namespace: String,
@@ -18,6 +20,7 @@ pub struct BurnCentralArgs {
     version,
     about = "Burn Central Runtime CLI"
 )]
+/// Arguments provided via CLI by the Burn Central CLI
 pub struct RuntimeArgs {
     /// The kind of routine to execute. It can be `training` or `inference`.
     pub kind: String,
