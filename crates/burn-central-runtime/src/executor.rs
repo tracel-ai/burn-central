@@ -145,6 +145,8 @@ impl std::fmt::Display for TargetId {
     }
 }
 
+// Hide element that are only used internally by the gen crate.
+#[doc(hidden)]
 /// A builder for creating an `Executor` instance with registered routines.
 pub struct ExecutorBuilder<B: AutodiffBackend> {
     executor: Executor<B>,
@@ -207,6 +209,8 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
     }
 }
 
+// Hide element that are only used internally by the gen crate.
+#[doc(hidden)]
 /// An executor that manages the execution of routines for different targets.
 pub struct Executor<B: Backend> {
     client: Option<BurnCentral>,

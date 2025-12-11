@@ -19,6 +19,9 @@ impl Error {
     }
 }
 
+/// Trait for experiments arguments. It specify that the type must be serializable, deserializable
+/// and implement default. The reason it must implement default is that when you override a value
+/// it will only override the value you provide, the rest will be filled with the default value.
 pub trait ExperimentArgs: Serialize + for<'de> Deserialize<'de> + Default {}
 impl<T> ExperimentArgs for T where T: Serialize + for<'de> Deserialize<'de> + Default {}
 
