@@ -2,6 +2,9 @@
 #[cfg(not(any(feature = "burn_0_20", feature = "burn_0_19")))]
 compile_error!("At least one burn version feature must be enabled: burn_0_20 or burn_0_19");
 
+#[cfg(all(feature = "burn_0_20", feature = "burn_0_19"))]
+compile_error!("Only one burn version feature can be enabled at a time");
+
 mod client;
 
 pub mod schemas;
