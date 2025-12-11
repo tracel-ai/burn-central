@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use crate::artifacts::ArtifactKind;
 use crate::bundle::{BundleDecode, BundleEncode, BundleSink};
-use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use crate::burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
 use crate::burn::tensor::backend::Backend;
+use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use serde::Deserialize;
 use serde::{Serialize, de::DeserializeOwned};
 
