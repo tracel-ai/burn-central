@@ -92,7 +92,6 @@ where
     }
 }
 
-/// A recorder that saves and loads data from a remote server using the [BurnCentralClientState](BurnCentralClientState).
 #[derive(Debug, Clone)]
 pub struct RemoteCheckpointRecorder {
     experiment_handle: ExperimentRunHandle,

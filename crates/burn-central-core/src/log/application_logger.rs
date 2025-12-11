@@ -10,13 +10,11 @@ use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{Layer, registry};
 
-/// The installer for the remote experiment logger.
 pub struct RemoteExperimentLoggerInstaller {
     experiment_handle: Arc<ExperimentRunHandle>,
 }
 
 impl RemoteExperimentLoggerInstaller {
-    /// Creates a new instance of the remote experiment logger installer with the given [BurnCentralClientState].
     pub fn new(experiment_handle: &ExperimentRun) -> Self {
         Self {
             experiment_handle: Arc::new(experiment_handle.handle()),
