@@ -32,7 +32,7 @@ jobs:
       - name: Typos
         uses: tracel-ai/github-actions/check-typos@v1
 
-  lint-checks:
+  features-checks:
     needs: checks
     runs-on: ubuntu-latest
     strategy:
@@ -47,25 +47,12 @@ jobs:
       # --------------------------------------------------------------------------------
       - name: Lint (${{ matrix.features }})
         run: cargo xtask check --features ${{ matrix.features }} lint
-
-  doc-checks:
-    needs: lint-checks
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        features: [burn_0_19, burn_0_20]
-    steps:
-      - name: Setup Rust
-        uses: tracel-ai/github-actions/setup-rust@v3
-        with:
-          rust-toolchain: stable
-          cache-key: stable-linux-${{ matrix.features }}
       # --------------------------------------------------------------------------------
       - name: Documentation Tests (${{ matrix.features }})
         run: cargo xtask doc --features ${{ matrix.features }} tests
 
   tests:
-    needs: doc-checks
+    needs: [features-checks]
     runs-on: ubuntu-latest
     steps:
       - name: Setup Rust
