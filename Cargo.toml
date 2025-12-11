@@ -8,18 +8,16 @@ members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.3.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
-rust-version = "1.87.0"
+rust-version = "1.85"
 authors = ["Tracel Technologies Inc."]
 repository = "https://github.com/tracel-ai/burn-central"
 keywords = ["tracel", "burn-central", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { version = "0.20.0-pre.4", default-features = false, features = ["train"]  }
-
 anyhow = "1.0.98"
 toml = "0.8.22"
 clap = { version = "4.5.39", features = ["derive"] }
@@ -72,14 +70,12 @@ tracing-subscriber = { version = "0.3.20" }
 burn-central-client = "0.3.0"
 
 ## Crate
-burn-central-core = { version = "0.2.0", path = "crates/burn-central-core" }
-burn-central-runtime = { version = "0.2.0", path = "crates/burn-central-runtime" }
-burn-central-macros = { version = "0.2.0", path = "crates/burn-central-macros" }
-burn-central-workspace = { version = "0.1.0", path = "crates/burn-central-workspace" }
-burn-central-cli = { version = "0.1.0", path = "crates/burn-central-cli" }
+burn-central-core = { version = "0.3.0", path = "crates/burn-central-core" }
+burn-central-runtime = { version = "0.3.0", path = "crates/burn-central-runtime" }
+burn-central-macros = { version = "0.3.0", path = "crates/burn-central-macros" }
 
 ### For xtask crate ###
-tracel-xtask = { version = "4.5.0" }
+tracel-xtask = { version = "4.8.0" }
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.

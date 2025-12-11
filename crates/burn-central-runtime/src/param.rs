@@ -1,8 +1,8 @@
 use crate::ExecutionContext;
 use crate::types::{Args, Model, MultiDevice};
 use anyhow::Result;
-use burn::module::Module;
-use burn::prelude::Backend;
+use burn_central_core::burn::module::Module;
+use burn_central_core::burn::prelude::Backend;
 use burn_central_core::experiment::{ExperimentArgs, ExperimentRun};
 use variadics_please::all_tuples;
 

@@ -3,7 +3,7 @@ use crate::inference::model::ModelAccessor;
 use crate::output::RoutineOutput;
 use crate::param::RoutineParam;
 use crate::{MultiDevice, Out, State};
-use burn::prelude::Backend;
+use burn_central_core::burn::prelude::Backend;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 

@@ -8,7 +8,7 @@ use crate::inference::model::ModelHost;
 use crate::input::RoutineInput;
 use crate::routine::ExecutorRoutineWrapper;
 use crate::{InferenceJob, InferenceJobBuilder, IntoRoutine, Routine, StrappedInferenceJobBuilder};
-use burn::prelude::Backend;
+use burn_central_core::burn::prelude::Backend;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 

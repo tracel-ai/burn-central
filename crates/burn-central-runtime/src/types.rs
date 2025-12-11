@@ -1,4 +1,4 @@
-use burn::prelude::Backend;
+use burn_central_core::burn::prelude::Backend;
 use burn_central_core::experiment::ExperimentArgs;
 use derive_more::{Deref, From};
 

@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::burn::train::ApplicationLoggerInstaller;
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
-use burn::train::ApplicationLoggerInstaller;
 use tracing_subscriber::fmt::MakeWriter;
 
 use tracing_core::{Level, LevelFilter};

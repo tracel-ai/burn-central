@@ -29,17 +29,40 @@ jobs:
           TERM: xterm-256color
         run: cargo xtask check format
       # --------------------------------------------------------------------------------
-      - name: Lint
-        run: cargo xtask check lint
-      # --------------------------------------------------------------------------------
       - name: Typos
         uses: tracel-ai/github-actions/check-typos@v1
+
+  features-checks:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: [burn_0_19, burn_0_20]
+    steps:
+      - name: Setup Rust
+        uses: tracel-ai/github-actions/setup-rust@v3
+        with:
+          rust-toolchain: stable
+          cache-key: stable-linux-${{ matrix.features }}
+      # --------------------------------------------------------------------------------
+      - name: Lint (${{ matrix.features }})
+        run: cargo xtask check --features ${{ matrix.features }} lint
+      # --------------------------------------------------------------------------------
+      - name: Documentation Tests (${{ matrix.features }})
+        run: cargo xtask doc --features ${{ matrix.features }} tests
+
+  tests:
+    needs: [features-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Rust
+        uses: tracel-ai/github-actions/setup-rust@v3
+        with:
+          rust-toolchain: stable
+          cache-key: stable-linux
       # --------------------------------------------------------------------------------
       - name: Unit Tests
         run: cargo xtask test unit
       # --------------------------------------------------------------------------------
       - name: Integration Tests
         run: cargo xtask test integration
-      # --------------------------------------------------------------------------------
-      - name: Documentation Tests
-        run: cargo xtask doc tests
