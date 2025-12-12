@@ -93,6 +93,7 @@ where
 }
 
 #[derive(Debug, Clone)]
+/// Remote implementation for burn `Recorder`, `FileRecorder` traits.
 pub struct RemoteCheckpointRecorder {
     experiment_handle: ExperimentRunHandle,
 }

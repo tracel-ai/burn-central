@@ -22,8 +22,9 @@ pub enum InitError {
 }
 
 #[derive(Debug, thiserror::Error)]
-/// Errors that can occur during when using the [BurnCentral] client. Those errors should be
-/// handled by the user of this library. If he want to implement fallback bahavior or retry logic.
+/// Errors that can occur during when using the [BurnCentral] client.
+///
+/// Those errors should be handled by the user of this library. If he want to implement fallback bahavior or retry logic.
 pub enum BurnCentralError {
     /// Input validation errors
     #[error("Invalid experiment path: {0}")]

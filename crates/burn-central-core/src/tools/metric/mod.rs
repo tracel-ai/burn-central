@@ -10,6 +10,7 @@ use burn_central_client::websocket::MetricLog;
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 
+/// Remote implementation for burn `MetricLogger` trait.
 pub struct RemoteMetricLogger {
     experiment_handle: ExperimentRunHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,

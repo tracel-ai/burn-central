@@ -10,6 +10,7 @@ use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{Layer, registry};
 
+/// Remote implementation for burn `ApplicationLoggerInstaller` trait.
 pub struct RemoteExperimentLoggerInstaller {
     experiment_handle: Arc<ExperimentRunHandle>,
 }

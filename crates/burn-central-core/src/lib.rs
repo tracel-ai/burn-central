@@ -1,12 +1,8 @@
 mod client;
 
-pub mod schemas;
-
-pub mod log;
-pub mod metrics;
-pub mod record;
-
 pub mod experiment;
+pub mod schemas;
+pub mod tools;
 
 pub use crate::client::*;
 
