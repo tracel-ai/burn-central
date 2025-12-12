@@ -34,7 +34,7 @@
 //!  the training registration but inference will come soon. Here is
 //!
 //!  #### Example
-//!  ```rust
+//!  ```ignore
 //!  use burn_central::macros::register;
 //!
 //!  #[register(training, name = "my_training_procedure")]

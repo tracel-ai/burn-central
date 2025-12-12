@@ -14,9 +14,44 @@ use burn_central_core::experiment::{
 };
 use std::collections::HashMap;
 
-/// A loader for artifacts associated with a specific experiment in Burn Central.
+/// Artifact loader for loading artifacts from Burn Central. It allow to fecth for instance other
+/// experiment endpoint to be able to restart from a certain point your experiment.
 ///
-/// It can be used as a parameter in experiment routines to load artifacts like models or checkpoints.
+/// You can build it yourself by using the [ArtifactLoader::new] function with your namespace (in
+/// slug format (e.g. "my-team")), project name and a [burn_central_core::BurnCentral]. However, it
+/// is also possible to request it directly in your routine by using delcaring the param like so:
+///
+/// ```ignore
+/// # use burn_central_runtime::ArtifactLoader;
+/// # use burn_central_core::bundle::BundleDecode;
+/// # use burn_central::register;
+/// # use burn_central_runtime::Model;
+/// # use burn_central_runtime::MultiDevice;
+/// # use serde::*;
+/// #[derive(Deserialize, Serialize, Default)]
+/// pub struct ExperimentConfig {
+///     pub experiment_num: Option<i32>,
+/// }
+///
+/// #[register(training, name = "mnist")]
+/// pub fn training<B: AutodiffBackend>(
+///     config: Args<ExperimentConfig>,
+///     MultiDevice(devices): MultiDevice<B>,
+///     loader: ArtifactLoader<ModelArtifact<B>>,
+/// ) -> Result<Model<ModelArtifact<B::InnerBackend>>, String> {
+///     // Load a pretrained model if an experiment number is provided.
+///     if let Some(experiment_num) = config.experiment_num {
+///         let pretrained_model = loader
+///             .load(experiment_num, "train_artifacts")
+///             .expect("To be able to fetch artifacts");
+///     }
+/// }
+/// ```
+///
+/// As you can see in the exemple above, you can use the loader to dynamicly request experiment
+/// artifacts when requested trought your routine configuration.
+///
+
 pub struct ArtifactLoader<T: BundleDecode> {
     namespace: String,
     project_name: String,

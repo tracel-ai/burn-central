@@ -9,7 +9,9 @@ pub mod record;
 pub mod experiment;
 
 pub use crate::client::*;
-pub use burn_central_client::BurnCentralCredentials;
+
+#[doc(hidden)]
+pub type BurnCentralCredentials = burn_central_client::BurnCentralCredentials;
 
 pub mod artifacts;
 pub mod bundle;

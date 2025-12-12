@@ -22,14 +22,22 @@ pub enum InitError {
 }
 
 #[derive(Debug, thiserror::Error)]
+/// Errors that can occur during when using the [BurnCentral] client. Those errors should be
+/// handled by the user of this library. If he want to implement fallback bahavior or retry logic.
 pub enum BurnCentralError {
-    // Input validation errors
+    /// Input validation errors
     #[error("Invalid experiment path: {0}")]
     InvalidExperimentPath(String),
+    /// This error occurs when the provided project path is invalid. It is a input validation
+    /// errors. No API call has been made yet.
     #[error("Invalid project path: {0}")]
     InvalidProjectPath(String),
+    /// This error occurs when the provided experiment number is invalid. It is a input validation
+    /// errors. No API call has been made yet.
     #[error("Invalid experiment number: {0}")]
     InvalidExperimentNumber(String),
+    /// This error occurs when the provided model path is invalid. It is a input validation
+    /// errors. No API call has been made yet.
     #[error("Invalid model path: {0}")]
     InvalidModelPath(String),
 
@@ -46,7 +54,8 @@ pub enum BurnCentralError {
         context: String,
         source: ClientError,
     },
-    /// Represents an error related to the experiment tracker.
+    /// Represents an error related to the experiment tracker. Those errors are coming from the
+    /// websocket connection that open when starting an experiment run.
     #[error("Experiment error: {0}")]
     ExperimentTracker(#[from] ExperimentTrackerError),
 
@@ -63,7 +72,9 @@ pub enum BurnCentralError {
     Internal(String),
 }
 
-/// This builder struct is used to create a [BurnCentral] client.
+/// This builder struct is used to create a [BurnCentral] client. It should only be used by the
+/// burn_central generated crates.
+#[doc(hidden)]
 pub struct BurnCentralBuilder {
     endpoint: Option<String>,
     credentials: BurnCentralCredentials,
@@ -101,6 +112,9 @@ impl BurnCentralBuilder {
 }
 
 /// This struct provides the main interface to interact with Burn Central.
+///
+/// It wrap the burn_central_client [Client] and provides higher level methods to interact with
+/// experiments, models, and artifacts.
 #[derive(Clone)]
 pub struct BurnCentral {
     client: Client,
@@ -108,12 +122,22 @@ pub struct BurnCentral {
 
 impl BurnCentral {
     /// Creates a new [BurnCentral] instance with the given credentials.
+    ///
+    /// This is to be used by the burn central generated crates. It is internal tooling and user
+    /// should not seek to connect with it directly as they would expose their credentials in the
+    /// code.
+    #[doc(hidden)]
     pub fn login(credentials: impl Into<BurnCentralCredentials>) -> Result<Self, InitError> {
         let credentials = credentials.into();
         BurnCentralBuilder::new(credentials).build()
     }
 
     /// Creates a new [BurnCentralBuilder] to configure the client.
+    ///
+    /// This is to be used by the burn central generated crates. It is internal tooling and user
+    /// should not seek to connect with it directly as they would expose their credentials in the
+    /// code.
+    #[doc(hidden)]
     pub fn builder(credentials: impl Into<BurnCentralCredentials>) -> BurnCentralBuilder {
         BurnCentralBuilder::new(credentials)
     }

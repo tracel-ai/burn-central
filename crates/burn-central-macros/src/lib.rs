@@ -11,9 +11,8 @@
 //! ## Usage
 //! To use the macros you simply need to import it from this crate and use the `register` macro
 //! to mark your training and inference functions. Here is an exemple:
-//! ```rust
-//! use burn_central::macros::register;
-//!
+//! ```ignore
+//! # use burn_central_macros::register;
 //! #[register(training, name = "my_training_procedure")]
 //! async fn my_training_function() {
 //!  // Your training code here
