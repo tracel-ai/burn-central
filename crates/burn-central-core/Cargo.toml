@@ -27,7 +27,6 @@ uuid.workspace = true
 regex.workspace = true
 once_cell.workspace = true
 crossbeam.workspace = true
-json-patch.workspace = true
 burn-central-client.workspace = true
 
 [dev-dependencies]

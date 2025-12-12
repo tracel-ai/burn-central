@@ -7,11 +7,10 @@ use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
 use crate::param::RoutineParam;
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
+use crate::types::{ExperimentArgs, deserialize_and_merge_with_default};
 use burn::tensor::backend::AutodiffBackend;
 use burn_central_core::BurnCentral;
-use burn_central_core::experiment::{
-    ExperimentArgs, ExperimentRun, deserialize_and_merge_with_default,
-};
+use burn_central_core::experiment::ExperimentRun;
 use std::collections::HashMap;
 
 /// Artifact loader for loading artifacts from Burn Central. It allow to fecth for instance other

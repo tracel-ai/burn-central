@@ -34,4 +34,4 @@ pub mod cli;
 #[doc(inline)]
 pub use executor::{ArtifactLoader, Executor, ExecutorBuilder};
 #[doc(inline)]
-pub use types::{Args, Model, MultiDevice};
+pub use types::{Args, ExperimentArgs, Model, MultiDevice};

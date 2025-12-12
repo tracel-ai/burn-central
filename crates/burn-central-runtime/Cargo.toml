@@ -26,6 +26,8 @@ derive_more.workspace = true
 clap.workspace = true
 log.workspace = true
 crossbeam.workspace = true
+serde.workspace = true
+json-patch.workspace = true
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
