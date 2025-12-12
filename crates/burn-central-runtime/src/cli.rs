@@ -25,7 +25,7 @@ pub struct RuntimeArgs {
     /// The kind of routine to execute. It can be `training` or `inference`.
     pub kind: String,
     /// The name of the routine to execute. We pass the routine name here as the name might not be
-    /// the name of the funciton if the user decide to rename it using the `name` attribute in the
+    /// the name of the function if the user decide to rename it using the `name` attribute in the
     /// register macro.
     pub routine: String,
     /// JSON string representing the arguments to pass to the routine. The arguments pass here are

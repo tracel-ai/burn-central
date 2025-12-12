@@ -19,7 +19,7 @@
 //! - `runtime`: The runtime module that execute the registered training and inference functions.
 //!
 //!  If you are a user you might want to checkout the documentation around the `core` crates as
-//!  this is where you will find exemple on how to use feature of this SDK.
+//!  this is where you will find example on how to use feature of this SDK.
 //!
 //!  ### Runtime
 //!  For the `runtime`, the only thing you need to know is that we use it to wrape the function
@@ -56,6 +56,6 @@ pub use burn_central_core as core;
 pub use burn_central_macros as macros;
 
 /// The runtime crate execute training and inference procedure registered with
-/// Burn Central Macros. It basicly form a wrapper crate that use your declare fucntions.
+/// Burn Central Macros. It basically form a wrapper crate that use your declare functions.
 #[doc(inline)]
 pub use burn_central_runtime as runtime;

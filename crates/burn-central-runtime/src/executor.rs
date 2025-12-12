@@ -19,7 +19,7 @@ use std::collections::HashMap;
 ///
 /// You can build it yourself by using the [ArtifactLoader::new] function with your namespace (in
 /// slug format (e.g. "my-team")), project name and a [burn_central_core::BurnCentral]. However, it
-/// is also possible to request it directly in your routine by using delcaring the param like so:
+/// is also possible to request it directly in your routine by using declaring the param like so:
 ///
 /// ```ignore
 /// # use burn_central_runtime::ArtifactLoader;
@@ -48,8 +48,8 @@ use std::collections::HashMap;
 /// }
 /// ```
 ///
-/// As you can see in the exemple above, you can use the loader to dynamicly request experiment
-/// artifacts when requested trought your routine configuration.
+/// As you can see in the example above, you can use the loader to dynamically request experiment
+/// artifacts when requested through your routine configuration.
 ///
 
 pub struct ArtifactLoader<T: BundleDecode> {
