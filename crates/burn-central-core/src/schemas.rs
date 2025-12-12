@@ -241,16 +241,3 @@ impl std::fmt::Display for ModelPath {
         write!(f, "{}/{}", self.project_path, self.model_name)
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct CreatedByUser {
-    pub id: i32,
-    pub username: String,
-    pub namespace: String,
-}
-
-pub struct User {
-    pub username: String,
-    pub email: String,
-    pub namespace: String,
-}

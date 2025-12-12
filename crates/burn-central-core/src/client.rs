@@ -3,7 +3,7 @@
 use crate::artifacts::ExperimentArtifactClient;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::models::ModelRegistry;
-use crate::schemas::{ExperimentPath, User};
+use crate::schemas::ExperimentPath;
 use burn_central_client::{BurnCentralCredentials, Client, ClientError};
 use reqwest::Url;
 
@@ -146,26 +146,6 @@ impl BurnCentral {
     /// Creates a new instance of [BurnCentral] with the given [Client].
     fn new(client: Client) -> Self {
         BurnCentral { client }
-    }
-
-    /// Returns the current user information.
-    pub fn me(&self) -> Result<User, BurnCentralError> {
-        let user = self.client.get_current_user().map_err(|e| {
-            if matches!(e, ClientError::Unauthorized) {
-                BurnCentralError::Unauthenticated
-            } else {
-                BurnCentralError::Client {
-                    context: "Failed to get current user".to_string(),
-                    source: e,
-                }
-            }
-        })?;
-
-        Ok(User {
-            username: user.username,
-            email: user.email,
-            namespace: user.namespace,
-        })
     }
 
     /// Start a new experiment. This will create a new experiment on the Burn Central backend and start it.
