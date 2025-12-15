@@ -1,3 +1,5 @@
+//! This is util for generated crate to be able to test parsing at runtime.
+
 use clap::{Args, Parser};
 
 #[derive(Args, Debug)]

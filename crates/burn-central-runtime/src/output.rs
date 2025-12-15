@@ -1,5 +1,5 @@
 use crate::executor::ExecutionContext;
-use crate::types::Model;
+use crate::params::default::Model;
 use burn::prelude::Backend;
 use burn_central_core::artifacts::ArtifactKind;
 use burn_central_core::bundle::BundleEncode;

@@ -20,14 +20,17 @@ mod job;
 mod model;
 mod streaming;
 
+mod input;
+pub mod params;
 #[cfg(test)]
 mod tests;
 
-pub use crate::types::{In, Out};
 pub use builder::*;
 pub use core::*;
 pub use error::InferenceError;
 pub use init::Init;
+pub use input::*;
 pub use job::JobHandle;
 pub use model::ModelAccessor;
+pub use params::{In, Out, State};
 pub use streaming::{CancelToken, EmitError, Emitter, OutStream};

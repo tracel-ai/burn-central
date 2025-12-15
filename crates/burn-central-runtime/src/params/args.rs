@@ -1,8 +1,9 @@
 use burn::prelude::Backend;
 use derive_more::{Deref, From};
-
 use json_patch::merge;
 use serde::{Deserialize, Serialize};
+
+use crate::{executor::ExecutionContext, params::RoutineParam};
 
 /// Trait for experiments arguments. It specify that the type must be serializable, deserializable
 /// and implement default. The reason it must implement default is that when you override a value
@@ -28,30 +29,14 @@ pub fn deserialize_and_merge_with_default<T: ExperimentArgs>(
 #[derive(From, Deref)]
 pub struct Args<T: ExperimentArgs>(pub T);
 
-/// Wrapper around multiple devices.
-///
-/// Since Burn Central CLI support selecting different backend on the fly. We handle the device
-/// selection in the generated crate. This structure is simply a marker for us to know where to
-/// inject the devices selected by the CLI.
-#[derive(Clone, Debug, Deref, From)]
-pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
+impl<B: Backend, C: ExperimentArgs> RoutineParam<ExecutionContext<B>> for Args<C> {
+    type Item<'new> = Args<C>;
 
-/// Wrapper around the model returned by a routine.
-///
-/// This is used to differentiate the model from other return types.
-/// Right now the macro force you to return a Model as we expect to be able to log it as a model
-/// artifact.
-#[derive(Clone, From, Deref)]
-pub struct Model<M>(pub M);
-
-#[allow(dead_code)]
-#[derive(Debug, Deref, From)]
-pub struct In<T>(pub T);
-#[derive(Debug, Deref, From)]
-pub struct Out<T>(pub T);
-#[allow(dead_code)]
-#[derive(Debug, Deref, From)]
-pub struct State<T>(pub T);
+    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+        let cfg = ctx.use_merged_args();
+        Ok(Args(cfg))
+    }
+}
 
 #[cfg(test)]
 mod tests {

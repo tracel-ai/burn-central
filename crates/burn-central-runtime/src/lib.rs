@@ -16,12 +16,10 @@
 
 mod error;
 mod executor;
-mod input;
 mod output;
-mod param;
+mod params;
 mod routine;
 mod type_name;
-mod types;
 
 // TODO: document inference module (probably should use the module instead)
 #[doc(hidden)]
@@ -31,7 +29,10 @@ pub mod inference;
 #[doc(hidden)]
 pub mod cli;
 
-#[doc(inline)]
-pub use executor::{ArtifactLoader, Executor, ExecutorBuilder};
-#[doc(inline)]
-pub use types::{Args, ExperimentArgs, Model, MultiDevice};
+pub use error::RuntimeError;
+pub use executor::{Executor, ExecutorBuilder};
+pub use params::{
+    args::{Args, ExperimentArgs},
+    artifact_loader::ArtifactLoader,
+    default::{Model, MultiDevice},
+};
