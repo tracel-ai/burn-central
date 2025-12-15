@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::bundle::{BundleDecode, InMemoryBundleReader};
-use crate::schemas::ModelPath;
 use burn_central_client::response::{ModelResponse, ModelVersionResponse};
 use burn_central_client::{Client, ClientError};
 
@@ -9,6 +8,13 @@ use burn_central_client::{Client, ClientError};
 #[derive(Clone)]
 pub struct ModelRegistry {
     client: Client,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPath {
+    owner_name: String,
+    project_name: String,
+    model_name: String,
 }
 
 impl ModelRegistry {
@@ -21,13 +27,13 @@ impl ModelRegistry {
         let response = self
             .client
             .get_model(
-                model_path.namespace(),
-                model_path.project_name(),
-                model_path.model_name(),
+                &model_path.owner_name,
+                &model_path.project_name,
+                &model_path.model_name,
             )
             .map_err(|e| {
                 if matches!(e, ClientError::NotFound) {
-                    ModelError::NotFound(format!("Model not found: {}", model_path))
+                    ModelError::NotFound(format!("Model not found: {:?}", model_path))
                 } else {
                     ModelError::Client(e)
                 }
@@ -87,7 +93,7 @@ impl ModelClient {
         let reader = self.download_raw(version)?;
         T::decode(&reader, settings).map_err(|e| {
             ModelError::Decode(format!(
-                "Failed to decode model {}: {}",
+                "Failed to decode model {:?}: {}",
                 self.model_path,
                 e.into()
             ))
@@ -99,14 +105,14 @@ impl ModelClient {
         let resp = self
             .client
             .presign_model_download(
-                self.model_path.namespace(),
-                self.model_path.project_name(),
-                self.model_path.model_name(),
+                &self.model_path.owner_name,
+                &self.model_path.project_name,
+                &self.model_path.model_name,
                 version,
             )
             .map_err(|e| {
                 if matches!(e, ClientError::NotFound) {
-                    ModelError::VersionNotFound(format!("{} v{}", self.model_path, version))
+                    ModelError::VersionNotFound(format!("{:?} v{}", self.model_path, version))
                 } else {
                     ModelError::Client(e)
                 }
@@ -127,14 +133,14 @@ impl ModelClient {
         let resp = self
             .client
             .get_model_version(
-                self.model_path.namespace(),
-                self.model_path.project_name(),
-                self.model_path.model_name(),
+                &self.model_path.owner_name,
+                &self.model_path.project_name,
+                &self.model_path.model_name,
                 version,
             )
             .map_err(|e| {
                 if matches!(e, ClientError::NotFound) {
-                    ModelError::VersionNotFound(format!("{} v{}", self.model_path, version))
+                    ModelError::VersionNotFound(format!("{:?} v{}", self.model_path, version))
                 } else {
                     ModelError::Client(e)
                 }

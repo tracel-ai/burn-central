@@ -16,9 +16,6 @@ pub enum InitError {
     /// Represents an error when the endpoint URL is invalid.
     #[error("Failed to parse endpoint URL: {0}")]
     InvalidEndpointUrl(String),
-    /// Represents an error when an environment variable is not set.
-    #[error("Environment variable not set: {0}")]
-    EnvNotSet(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -163,15 +160,15 @@ impl BurnCentral {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,
             })?;
-        let experiment_path = ExperimentPath::try_from(format!(
-            "{}/{}/{}",
-            namespace, project_name, experiment.experiment_num
-        ))?;
-
         println!("Experiment num: {}", experiment.experiment_num);
 
-        ExperimentRun::new(self.client.clone(), experiment_path)
-            .map_err(BurnCentralError::ExperimentTracker)
+        ExperimentRun::new(
+            self.client.clone(),
+            namespace,
+            project_name,
+            experiment.experiment_num,
+        )
+        .map_err(BurnCentralError::ExperimentTracker)
     }
 
     pub fn artifacts(
@@ -180,7 +177,7 @@ impl BurnCentral {
         project: &str,
         exp_num: i32,
     ) -> Result<ExperimentArtifactClient, BurnCentralError> {
-        let exp_path = ExperimentPath::try_from(format!("{}/{}/{}", owner, project, exp_num))?;
+        let exp_path = ExperimentPath::new(owner, project, exp_num);
         Ok(ExperimentArtifactClient::new(self.client.clone(), exp_path))
     }
 

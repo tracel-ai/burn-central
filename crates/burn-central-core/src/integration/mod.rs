@@ -1,9 +1,9 @@
-//! # Burn Central Remote toolings
+//! # Burn implementations for integrating  with Burn Central
 //!
 //! Burn Central toolings are meant to be injected in learner instead of the basic burn define
 //! toolings. They must be manually override in the learner builder like so:
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use burn::train::LearnerBuilder;
 //! let client: BurnCentral;
 //!

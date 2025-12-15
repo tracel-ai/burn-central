@@ -46,9 +46,7 @@
 //!
 //!
 
-/// This modules is the heart of the SDK as it interface with the Burn Central platform API.
-#[doc(inline)]
-pub use burn_central_core as core;
+pub use burn_central_core::*;
 
 /// This crate provide the register macros. It allow user to mark there training functions so they
 /// can be found by Burn Central CLI.

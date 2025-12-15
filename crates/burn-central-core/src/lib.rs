@@ -1,8 +1,8 @@
 mod client;
 
 pub mod experiment;
-pub mod schemas;
-pub mod tools;
+pub mod integration;
+mod schemas;
 
 pub use crate::client::*;
 
@@ -12,3 +12,4 @@ pub type BurnCentralCredentials = burn_central_client::BurnCentralCredentials;
 pub mod artifacts;
 pub mod bundle;
 pub mod models;
+pub use schemas::*;
