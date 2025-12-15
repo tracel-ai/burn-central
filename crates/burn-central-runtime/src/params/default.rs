@@ -7,6 +7,9 @@ use derive_more::{Deref, From};
 /// Since Burn Central CLI support selecting different backend on the fly. We handle the device
 /// selection in the generated crate. This structure is simply a marker for us to know where to
 /// inject the devices selected by the CLI.
+///
+/// We are planning to support multi device training in the future, however we currenly only
+/// support one so this vector will always contains one device for now.
 #[derive(Clone, Debug, Deref, From)]
 pub struct MultiDevice<B: Backend>(pub Vec<B::Device>);
 
