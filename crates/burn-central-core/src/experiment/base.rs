@@ -281,20 +281,20 @@ pub struct ExperimentRun {
 impl ExperimentRun {
     pub fn new(
         burn_client: Client,
-        experiment_path: ExperimentPath,
+        namespace: &str,
+        project_name: &str,
+        experiment_num: i32,
     ) -> Result<Self, ExperimentTrackerError> {
         let ws_client = burn_client
-            .create_experiment_run_websocket(
-                experiment_path.owner_name(),
-                experiment_path.project_name(),
-                experiment_path.experiment_num(),
-            )
+            .create_experiment_run_websocket(namespace, project_name, experiment_num)
             .map_err(|e| {
                 ExperimentTrackerError::ConnectionFailed(format!(
                     "Failed to create WebSocket client: {}",
                     e
                 ))
             })?;
+
+        let experiment_path = ExperimentPath::new(namespace, project_name, experiment_num);
 
         let log_store = TempLogStore::new(burn_client.clone(), experiment_path.clone());
         let (sender, receiver) = crossbeam::channel::unbounded();

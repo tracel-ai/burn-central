@@ -1,4 +1,4 @@
-﻿use crate::{In, Routine};
+﻿use crate::{inference::In, routine::Routine};
 use variadics_please::all_tuples;
 
 pub type RoutineIn<'a, Ctx, S> = <<S as Routine<Ctx>>::In as RoutineInput>::Inner<'a>;

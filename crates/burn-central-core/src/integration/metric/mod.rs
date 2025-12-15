@@ -10,7 +10,7 @@ use burn_central_client::websocket::MetricLog;
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 
-/// The remote metric logger, used to send metric logs to Burn Central.
+/// Remote implementation for burn `MetricLogger` trait.
 pub struct RemoteMetricLogger {
     experiment_handle: ExperimentRunHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,
@@ -18,7 +18,6 @@ pub struct RemoteMetricLogger {
 }
 
 impl RemoteMetricLogger {
-    /// Create a new instance of the remote metric logger with the given [BurnCentralClientState] and metric group name.
     pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),

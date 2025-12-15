@@ -1,35 +1,41 @@
+use burn::prelude::Backend;
+use derive_more::{Deref, From};
 use json_patch::merge;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    PatchError(json_patch::PatchError),
-    #[error(transparent)]
-    Serialization(serde_json::Error),
-}
+use crate::{executor::ExecutionContext, params::RoutineParam};
 
-impl Error {
-    pub fn is_syntax(&self) -> bool {
-        matches!(self, Error::Serialization(e) if e.is_syntax())
-    }
-
-    pub fn is_data(&self) -> bool {
-        matches!(self, Error::Serialization(e) if e.is_data())
-    }
-}
-
+/// Trait for experiments arguments. It specify that the type must be serializable, deserializable
+/// and implement default. The reason it must implement default is that when you override a value
+/// it will only override the value you provide, the rest will be filled with the default value.
 pub trait ExperimentArgs: Serialize + for<'de> Deserialize<'de> + Default {}
 impl<T> ExperimentArgs for T where T: Serialize + for<'de> Deserialize<'de> + Default {}
 
 pub fn deserialize_and_merge_with_default<T: ExperimentArgs>(
     args: &serde_json::Value,
-) -> Result<T, Error> {
-    let mut merged = serde_json::to_value(T::default()).map_err(Error::Serialization)?;
+) -> Result<T, serde_json::Error> {
+    let mut merged = serde_json::to_value(T::default())?;
 
     merge(&mut merged, args);
 
-    serde_json::from_value(merged).map_err(Error::Serialization)
+    serde_json::from_value(merged)
+}
+
+/// Args are wrapper around the config you want to inject.
+///
+/// The type T must implement [ExperimentArgs] trait. This trait allow us to override the
+/// configuration from the CLI arguments you can specify while given us a fallback for arguments
+/// you don't provide.
+#[derive(From, Deref)]
+pub struct Args<T: ExperimentArgs>(pub T);
+
+impl<B: Backend, C: ExperimentArgs> RoutineParam<ExecutionContext<B>> for Args<C> {
+    type Item<'new> = Args<C>;
+
+    fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
+        let cfg = ctx.use_merged_args();
+        Ok(Args(cfg))
+    }
 }
 
 #[cfg(test)]

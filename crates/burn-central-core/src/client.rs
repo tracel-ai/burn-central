@@ -3,7 +3,7 @@
 use crate::artifacts::ExperimentArtifactClient;
 use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::models::ModelRegistry;
-use crate::schemas::{ExperimentPath, User};
+use crate::schemas::ExperimentPath;
 use burn_central_client::{BurnCentralCredentials, Client, ClientError};
 use reqwest::Url;
 
@@ -16,20 +16,26 @@ pub enum InitError {
     /// Represents an error when the endpoint URL is invalid.
     #[error("Failed to parse endpoint URL: {0}")]
     InvalidEndpointUrl(String),
-    /// Represents an error when an environment variable is not set.
-    #[error("Environment variable not set: {0}")]
-    EnvNotSet(String),
 }
 
 #[derive(Debug, thiserror::Error)]
+/// Errors that can occur during when using the [BurnCentral] client.
+///
+/// Those errors should be handled by the user of this library. If he want to implement fallback behavior or retry logic.
 pub enum BurnCentralError {
-    // Input validation errors
+    /// Input validation errors
     #[error("Invalid experiment path: {0}")]
     InvalidExperimentPath(String),
+    /// This error occurs when the provided project path is invalid. It is a input validation
+    /// errors. No API call has been made yet.
     #[error("Invalid project path: {0}")]
     InvalidProjectPath(String),
+    /// This error occurs when the provided experiment number is invalid. It is a input validation
+    /// errors. No API call has been made yet.
     #[error("Invalid experiment number: {0}")]
     InvalidExperimentNumber(String),
+    /// This error occurs when the provided model path is invalid. It is a input validation
+    /// errors. No API call has been made yet.
     #[error("Invalid model path: {0}")]
     InvalidModelPath(String),
 
@@ -46,7 +52,8 @@ pub enum BurnCentralError {
         context: String,
         source: ClientError,
     },
-    /// Represents an error related to the experiment tracker.
+    /// Represents an error related to the experiment tracker. Those errors are coming from the
+    /// websocket connection that open when starting an experiment run.
     #[error("Experiment error: {0}")]
     ExperimentTracker(#[from] ExperimentTrackerError),
 
@@ -63,7 +70,9 @@ pub enum BurnCentralError {
     Internal(String),
 }
 
-/// This builder struct is used to create a [BurnCentral] client.
+/// This builder struct is used to create a [BurnCentral] client. It should only be used by the
+/// burn_central generated crates.
+#[doc(hidden)]
 pub struct BurnCentralBuilder {
     endpoint: Option<String>,
     credentials: BurnCentralCredentials,
@@ -101,6 +110,9 @@ impl BurnCentralBuilder {
 }
 
 /// This struct provides the main interface to interact with Burn Central.
+///
+/// It wrap the burn_central_client [Client] and provides higher level methods to interact with
+/// experiments, models, and artifacts.
 #[derive(Clone)]
 pub struct BurnCentral {
     client: Client,
@@ -108,12 +120,22 @@ pub struct BurnCentral {
 
 impl BurnCentral {
     /// Creates a new [BurnCentral] instance with the given credentials.
+    ///
+    /// This is to be used by the burn central generated crates. It is internal tooling and user
+    /// should not seek to connect with it directly as they would expose their credentials in the
+    /// code.
+    #[doc(hidden)]
     pub fn login(credentials: impl Into<BurnCentralCredentials>) -> Result<Self, InitError> {
         let credentials = credentials.into();
         BurnCentralBuilder::new(credentials).build()
     }
 
     /// Creates a new [BurnCentralBuilder] to configure the client.
+    ///
+    /// This is to be used by the burn central generated crates. It is internal tooling and user
+    /// should not seek to connect with it directly as they would expose their credentials in the
+    /// code.
+    #[doc(hidden)]
     pub fn builder(credentials: impl Into<BurnCentralCredentials>) -> BurnCentralBuilder {
         BurnCentralBuilder::new(credentials)
     }
@@ -121,26 +143,6 @@ impl BurnCentral {
     /// Creates a new instance of [BurnCentral] with the given [Client].
     fn new(client: Client) -> Self {
         BurnCentral { client }
-    }
-
-    /// Returns the current user information.
-    pub fn me(&self) -> Result<User, BurnCentralError> {
-        let user = self.client.get_current_user().map_err(|e| {
-            if matches!(e, ClientError::Unauthorized) {
-                BurnCentralError::Unauthenticated
-            } else {
-                BurnCentralError::Client {
-                    context: "Failed to get current user".to_string(),
-                    source: e,
-                }
-            }
-        })?;
-
-        Ok(User {
-            username: user.username,
-            email: user.email,
-            namespace: user.namespace,
-        })
     }
 
     /// Start a new experiment. This will create a new experiment on the Burn Central backend and start it.
@@ -158,15 +160,15 @@ impl BurnCentral {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,
             })?;
-        let experiment_path = ExperimentPath::try_from(format!(
-            "{}/{}/{}",
-            namespace, project_name, experiment.experiment_num
-        ))?;
-
         println!("Experiment num: {}", experiment.experiment_num);
 
-        ExperimentRun::new(self.client.clone(), experiment_path)
-            .map_err(BurnCentralError::ExperimentTracker)
+        ExperimentRun::new(
+            self.client.clone(),
+            namespace,
+            project_name,
+            experiment.experiment_num,
+        )
+        .map_err(BurnCentralError::ExperimentTracker)
     }
 
     pub fn artifacts(
@@ -175,7 +177,7 @@ impl BurnCentral {
         project: &str,
         exp_num: i32,
     ) -> Result<ExperimentArtifactClient, BurnCentralError> {
-        let exp_path = ExperimentPath::try_from(format!("{}/{}/{}", owner, project, exp_num))?;
+        let exp_path = ExperimentPath::new(owner, project, exp_num);
         Ok(ExperimentArtifactClient::new(self.client.clone(), exp_path))
     }
 

@@ -1,87 +1,14 @@
 use anyhow::Result;
 use burn::prelude::Backend;
-use burn_central_core::artifacts::ArtifactError;
-use burn_central_core::bundle::BundleDecode;
+use burn::tensor::backend::AutodiffBackend;
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
-use crate::param::RoutineParam;
+use crate::params::args::{ExperimentArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
-use burn::tensor::backend::AutodiffBackend;
 use burn_central_core::BurnCentral;
-use burn_central_core::experiment::{
-    ExperimentArgs, ExperimentRun, deserialize_and_merge_with_default,
-};
+use burn_central_core::experiment::ExperimentRun;
 use std::collections::HashMap;
-
-/// A loader for artifacts associated with a specific experiment in Burn Central.
-///
-/// It can be used as a parameter in experiment routines to load artifacts like models or checkpoints.
-pub struct ArtifactLoader<T: BundleDecode> {
-    namespace: String,
-    project_name: String,
-    client: BurnCentral,
-    _artifact: std::marker::PhantomData<T>,
-}
-
-impl<T: BundleDecode> ArtifactLoader<T> {
-    pub fn new(namespace: String, project_name: String, client: BurnCentral) -> Self {
-        Self {
-            namespace,
-            project_name,
-            client,
-            _artifact: std::marker::PhantomData,
-        }
-    }
-
-    /// Load an artifact by name with specific settings.
-    pub fn load_with(
-        &self,
-        experiment_num: i32,
-        name: impl AsRef<str>,
-        settings: &T::Settings,
-    ) -> Result<T, ArtifactError> {
-        let scope = self
-            .client
-            .artifacts(&self.namespace, &self.project_name, experiment_num)
-            .map_err(|e| {
-                ArtifactError::Internal(format!("Failed to create artifact scope: {}", e))
-            })?;
-
-        scope.download(name, settings)
-    }
-
-    /// Load an artifact by name with default settings.
-    pub fn load(&self, experiment_num: i32, name: impl AsRef<str>) -> Result<T, ArtifactError> {
-        let scope = self
-            .client
-            .artifacts(&self.namespace, &self.project_name, experiment_num)
-            .map_err(|e| {
-                ArtifactError::Internal(format!("Failed to create artifact scope: {}", e))
-            })?;
-
-        scope.download(name, &Default::default())
-    }
-}
-
-impl<B: Backend, T: BundleDecode> RoutineParam<ExecutionContext<B>> for ArtifactLoader<T> {
-    type Item<'new>
-        = ArtifactLoader<T>
-    where
-        ExecutionContext<B>: 'new;
-
-    fn try_retrieve(ctx: &ExecutionContext<B>) -> Result<Self::Item<'_>> {
-        let client = ctx.client.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Burn Central client is not configured in the execution context")
-        })?;
-
-        Ok(ArtifactLoader::new(
-            ctx.namespace.clone(),
-            ctx.project.clone(),
-            client.clone(),
-        ))
-    }
-}
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
 
@@ -118,6 +45,18 @@ impl<B: Backend> ExecutionContext<B> {
     pub fn devices(&self) -> &[B::Device] {
         &self.devices
     }
+
+    pub fn client(&self) -> Option<&BurnCentral> {
+        self.client.as_ref()
+    }
+
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    pub fn project(&self) -> &str {
+        &self.project
+    }
 }
 
 /// The kind of action that can be executed by the executor.
@@ -145,6 +84,8 @@ impl std::fmt::Display for TargetId {
     }
 }
 
+// Hide element that are only used internally by the gen crate.
+#[doc(hidden)]
 /// A builder for creating an `Executor` instance with registered routines.
 pub struct ExecutorBuilder<B: AutodiffBackend> {
     executor: Executor<B>,
@@ -207,6 +148,8 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
     }
 }
 
+// Hide element that are only used internally by the gen crate.
+#[doc(hidden)]
 /// An executor that manages the execution of routines for different targets.
 pub struct Executor<B: Backend> {
     client: Option<BurnCentral>,
@@ -315,7 +258,8 @@ impl<B: AutodiffBackend> Executor<B> {
 mod test {
     use std::convert::Infallible;
 
-    use crate::{Args, Model, MultiDevice};
+    use crate::params::args::Args;
+    use crate::{Model, MultiDevice};
 
     use super::*;
     use burn::backend::{Autodiff, NdArray};

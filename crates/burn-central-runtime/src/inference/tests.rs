@@ -1,8 +1,9 @@
-use crate::inference::ModelAccessor;
+use crate::MultiDevice;
 use crate::inference::core::InferenceBuilder;
 use crate::inference::init::Init;
+use crate::inference::params::{In, Out, State};
 use crate::inference::streaming::OutStream;
-use crate::{CancelToken, In, MultiDevice, Out, State};
+use crate::inference::{CancelToken, ModelAccessor};
 use burn::backend::NdArray;
 use burn::config::Config;
 use burn::nn::{Linear, LinearConfig};

@@ -1,7 +1,7 @@
 use crate::error::RuntimeError;
-use crate::input::{RoutineIn, RoutineInput};
+use crate::inference::{RoutineIn, RoutineInput};
 use crate::output::RoutineOutput;
-use crate::param::RoutineParam;
+use crate::params::RoutineParam;
 use crate::type_name::fn_type_name;
 use std::marker::PhantomData;
 use variadics_please::all_tuples;

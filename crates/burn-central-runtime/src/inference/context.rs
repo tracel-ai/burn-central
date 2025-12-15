@@ -1,8 +1,9 @@
 use super::streaming::{CancelToken, Emitter, OutStream};
+use crate::MultiDevice;
 use crate::inference::model::ModelAccessor;
+use crate::inference::{Out, State};
 use crate::output::RoutineOutput;
-use crate::param::RoutineParam;
-use crate::{MultiDevice, Out, State};
+use crate::params::RoutineParam;
 use burn::prelude::Backend;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
