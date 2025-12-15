@@ -41,8 +41,6 @@ use burn_central_core::bundle::BundleDecode;
 ///
 /// As you can see in the example above, you can use the loader to dynamically request experiment
 /// artifacts when requested through your routine configuration.
-///
-
 pub struct ArtifactLoader<T: BundleDecode> {
     namespace: String,
     project_name: String,

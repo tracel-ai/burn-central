@@ -39,9 +39,7 @@ impl ModelRegistry {
                 }
             })?;
 
-        let model = response.into();
-
-        Ok(ModelClient::new(self.client.clone(), model_path, model))
+        Ok(ModelClient::new(self.client.clone(), model_path, response))
     }
 
     /// Download a specific model version and decode it using the BundleDecode trait.
@@ -130,8 +128,7 @@ impl ModelClient {
 
     /// Get information about a specific model version.
     pub fn fetch(&self, version: u32) -> Result<ModelVersionResponse, ModelError> {
-        let resp = self
-            .client
+        self.client
             .get_model_version(
                 &self.model_path.owner_name,
                 &self.model_path.project_name,
@@ -144,9 +141,7 @@ impl ModelClient {
                 } else {
                     ModelError::Client(e)
                 }
-            })?;
-
-        Ok(resp.into())
+            })
     }
 
     /// Get the total number of versions available for this model.
