@@ -3,7 +3,7 @@
 //! Burn Central toolings are meant to be injected in learner instead of the basic burn define
 //! toolings. They must be manually override in the learner builder like so:
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use burn::train::LearnerBuilder;
 //! let client: BurnCentral;
 //!

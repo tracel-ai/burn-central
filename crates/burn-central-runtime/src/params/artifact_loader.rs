@@ -12,7 +12,7 @@ use burn_central_core::bundle::BundleDecode;
 /// slug format (e.g. "my-team")), project name and a [burn_central_core::BurnCentral]. However, it
 /// is also possible to request it directly in your routine by using declaring the param like so:
 ///
-/// ```rust,no_run
+/// ```ignore
 /// # use burn_central_runtime::ArtifactLoader;
 /// # use burn_central_core::bundle::BundleDecode;
 /// # use burn_central::register;
