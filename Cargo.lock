@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "burn-central-core",
  "burn-central-macros",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "burn",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "burn",
@@ -3767,7 +3767,7 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "log",
  "tracel-xtask",

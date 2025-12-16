@@ -8,7 +8,7 @@ members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.2.1"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -72,11 +72,9 @@ tracing-subscriber = { version = "0.3.20" }
 burn-central-client = "0.3.0"
 
 ## Crate
-burn-central-core = { version = "0.2.0", path = "crates/burn-central-core" }
-burn-central-runtime = { version = "0.2.0", path = "crates/burn-central-runtime" }
-burn-central-macros = { version = "0.2.0", path = "crates/burn-central-macros" }
-burn-central-workspace = { version = "0.1.0", path = "crates/burn-central-workspace" }
-burn-central-cli = { version = "0.1.0", path = "crates/burn-central-cli" }
+burn-central-core = { version = "0.2.1", path = "crates/burn-central-core" }
+burn-central-runtime = { version = "0.2.1", path = "crates/burn-central-runtime" }
+burn-central-macros = { version = "0.2.1", path = "crates/burn-central-macros" }
 
 ### For xtask crate ###
 tracel-xtask = { version = "4.5.0" }
