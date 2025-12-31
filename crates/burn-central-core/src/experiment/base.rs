@@ -358,7 +358,9 @@ impl ExperimentRun {
                 eprintln!("Warning: WebSocket failure during experiment finish: {msg}");
             }
             Err(ThreadError::LogFlushError(msg)) => {
-                eprintln!("Warning: Log artifact creation failed: {msg}");
+                eprintln!(
+                    "Warning: Log artifact creation failed: {msg}\nPlease verify that you have enough cloud storage available."
+                );
             }
             Err(ThreadError::Panic) => {
                 eprintln!("Warning: Experiment thread panicked");
