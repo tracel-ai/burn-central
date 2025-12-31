@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use burn::train::logger::MetricLogger;
-use burn::train::metric::store::{EpochSummary, Split};
+use burn::train::metric::store::{EpochSummary, MetricsUpdate, Split};
 use burn::train::metric::{
     MetricAttributes, MetricDefinition, MetricEntry, MetricId, NumericEntry,
 };
@@ -56,13 +56,26 @@ impl RemoteMetricLogger {
 impl MetricLogger for RemoteMetricLogger {
     fn log(
         &mut self,
-        items: Vec<MetricEntry>,
+        update: MetricsUpdate,
         epoch: usize,
         split: Split,
         _tag: Option<Arc<String>>,
     ) {
         self.iteration_count += 1;
-        let item_logs: Vec<MetricLog> = self.get_logs_from_entries(&items);
+
+        let entries: Vec<_> = update
+            .entries
+            .iter()
+            .chain(
+                update
+                    .entries_numeric
+                    .iter()
+                    .map(|numeric_update| &numeric_update.entry),
+            )
+            .cloned()
+            .collect();
+
+        let item_logs: Vec<MetricLog> = self.get_logs_from_entries(&entries);
         if item_logs.is_empty() {
             return;
         };
@@ -106,19 +119,5 @@ impl MetricLogger for RemoteMetricLogger {
         }
     }
 
-    fn log_epoch_summary(&mut self, summary: EpochSummary) {
-        let best_metric_values = self.get_logs_from_entries(&summary.best_metric_values);
-        if best_metric_values.is_empty() {
-            return;
-        };
-
-        match self.experiment_handle.log_epoch_summary(
-            summary.epoch_number,
-            summary.split.to_string(),
-            best_metric_values,
-        ) {
-            Ok(_) => (),
-            Err(e) => panic!("{e}"),
-        }
-    }
+    fn log_epoch_summary(&mut self, _summary: EpochSummary) {}
 }
