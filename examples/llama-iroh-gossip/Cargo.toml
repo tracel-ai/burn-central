@@ -1,0 +1,45 @@
+[package]
+name = "llama-iroh-gossip"
+version = "0.1.0"
+edition = "2021"
+description = "Distributed LLM inference using iroh-gossip and burn-central-runtime"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Burn & ML
+burn = { workspace = true, default-features = false, features = ["std"] }
+burn-central-runtime = { workspace = true }
+llama-burn = { path = "../llama-burn" }
+
+# Iroh for p2p networking
+iroh = { version = "0.95", features = ["default"] }
+iroh-gossip = "0.95"
+
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+futures = "0.3"
+
+# Serialization
+serde = { workspace = true }
+postcard = { version = "1.0", features = ["alloc"] }
+
+# Utilities
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive"] }
+uuid = { workspace = true }
+rand = "0.9.2"
+blake3 = "1.5"
+
+[features]
+default = []
+# Backend selection - match llama-burn features
+cuda = ["burn/cuda", "llama-burn/cuda"]
+llama3 = ["llama-burn/llama3"]
+tiny = ["llama-burn/tiny"]
+
+[[bin]]
+name = "llama-gossip-node"
+path = "src/main.rs"

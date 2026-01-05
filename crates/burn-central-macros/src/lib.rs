@@ -251,3 +251,117 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
         code.into()
     }
 }
+
+/// Macro to create an inference handler with a convenient builder module.
+///
+/// This macro transforms an inference handler function into a module with a `build` function
+/// that makes it easy to construct an `Inference` instance.
+///
+/// # Example
+///
+/// ```ignore
+/// use burn_central_runtime::inference::{In, ModelAccessor, OutStream, CancelToken};
+///
+/// #[inference_handler]
+/// fn my_handler<B: Backend>(
+///     In(input): In<String>,
+///     model: ModelAccessor<MyModel<B>>,
+///     output: OutStream<String>,
+/// ) -> Result<(), String> {
+///     // handler logic
+/// }
+///
+/// // Now you can use:
+/// let inference = my_handler::build(model);
+/// ```
+#[proc_macro_attribute]
+pub fn inference_handler(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as ItemFn);
+    let fn_name = &item.sig.ident;
+    let fn_vis = &item.vis;
+
+    // Extract type parameters from the function
+    let generics = &item.sig.generics;
+    let where_clause = &generics.where_clause;
+
+    // Extract the model type from ModelAccessor parameter
+    let mut model_type = None;
+    let mut backend_param = None;
+
+    for param in &item.sig.inputs {
+        if let syn::FnArg::Typed(pat_type) = param {
+            if let syn::Type::Path(type_path) = &*pat_type.ty {
+                let path = &type_path.path;
+                if let Some(segment) = path.segments.last() {
+                    if segment.ident == "ModelAccessor" {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
+                                model_type = Some(ty.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Find the Backend type parameter
+    if let Some(generics) = generics.params.first() {
+        if let syn::GenericParam::Type(type_param) = generics {
+            backend_param = Some(type_param.ident.clone());
+        }
+    }
+
+    let model_ty = model_type.expect("ModelAccessor parameter not found");
+    let backend = backend_param.unwrap_or_else(|| syn::parse_quote!(B));
+
+    let mod_name = fn_name;
+
+    // Build a combined where clause that includes Send requirements
+    let combined_where_clause = if let Some(wc) = where_clause {
+        quote! {
+            #wc, #model_ty: Send + 'static
+        }
+    } else {
+        quote! {
+            where #model_ty: Send + 'static
+        }
+    };
+
+    let code = quote! {
+        // The actual handler function
+        #item
+
+        // Module with the same name as the handler
+        #fn_vis mod #mod_name {
+            use super::*;
+
+            /// Create a builder pre-loaded with the model, ready for you to call `.build(handler)`.
+            ///
+            /// # Arguments
+            /// * `model` - The model to use for inference
+            ///
+            /// # Example
+            /// ```ignore
+            /// let inference = my_handler::builder(model).build(my_handler);
+            /// ```
+            pub fn build #generics (
+                model: #model_ty,
+            ) -> burn_central_runtime::inference::Inference<#backend, impl Send + 'static, burn_central_runtime::inference::In<impl Send + 'static>, impl Send + 'static>
+            #combined_where_clause
+            {
+                let model: Box<dyn std::any::Any + Send> = Box::new(model);
+                let #fn_name: Box<dyn std::any::Any> = Box::new(#fn_name);
+                burn_central_runtime::inference::InferenceBuilder::<#backend>::new()
+                    .with_model(*model.downcast().expect("Failed to downcast model"))
+                    .build(
+                        *#fn_name
+                            .downcast()
+                            .expect("Failed to downcast inference handler function"),
+                    )
+            }
+        }
+    };
+
+    code.into()
+}

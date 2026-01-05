@@ -25,6 +25,9 @@ mod type_name;
 #[doc(hidden)]
 pub mod inference;
 
+// Re-export inference_handler macro
+pub use burn_central_macros::inference_handler;
+
 // Hide element that are only used internally by the gen crate.
 #[doc(hidden)]
 pub mod cli;

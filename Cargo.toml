@@ -4,7 +4,7 @@
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
-members = ["crates/*", "xtask"]
+members = ["crates/*", "xtask", "examples/*"]
 
 [workspace.package]
 edition = "2024"
@@ -72,6 +72,7 @@ tracing-subscriber = { version = "0.3.20" }
 burn-central-client = "0.3.0"
 
 ## Crate
+burn-central = { version = "0.2.1", path = "crates/burn-central" }
 burn-central-core = { version = "0.2.1", path = "crates/burn-central-core" }
 burn-central-runtime = { version = "0.2.1", path = "crates/burn-central-runtime" }
 burn-central-macros = { version = "0.2.1", path = "crates/burn-central-macros" }
