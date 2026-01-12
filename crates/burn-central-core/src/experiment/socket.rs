@@ -92,11 +92,8 @@ impl ExperimentThread {
     }
 
     fn thread_loop(&mut self) -> Result<(), ThreadError> {
-        loop {
-            match self.message_receiver.recv() {
-                Ok(message) => self.process_message(message)?,
-                Err(_) => break,
-            }
+        while let Ok(message) = self.message_receiver.recv() {
+            self.process_message(message)?;
         }
 
         Ok(())
