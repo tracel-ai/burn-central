@@ -6,9 +6,8 @@ use crate::experiment::log_store::TempLogStore;
 use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
 use burn_central_client::Client;
-use burn_central_client::websocket::{
-    ExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
-};
+pub use burn_central_client::websocket::MetricLog;
+use burn_central_client::websocket::{ExperimentCompletion, ExperimentMessage, InputUsed};
 use crossbeam::channel::Sender;
 use serde::Serialize;
 use std::ops::Deref;
@@ -132,6 +131,7 @@ impl ExperimentRunHandle {
     pub fn try_log_error(&self, error: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?.log_error(error)
     }
+
     pub fn log_config<C: Serialize>(
         &self,
         name: impl Into<String>,
@@ -272,7 +272,7 @@ impl ExperimentRunInner {
 
 /// Represents an experiment in Burn Central, which is a run of a machine learning model or process.
 pub struct ExperimentRun {
-    inner: Arc<ExperimentRunInner>,
+    inner: Option<Arc<ExperimentRunInner>>,
     socket: Option<ExperimentSocket>,
     // temporary field to allow dereferencing to handle
     _handle: ExperimentRunHandle,
@@ -311,7 +311,7 @@ impl ExperimentRun {
         };
 
         Ok(ExperimentRun {
-            inner,
+            inner: Some(inner),
             socket: Some(socket),
             _handle,
         })
@@ -320,7 +320,7 @@ impl ExperimentRun {
     /// Returns a handle to the experiment, allowing logging of artifacts, metrics, and messages.
     pub fn handle(&self) -> ExperimentRunHandle {
         ExperimentRunHandle {
-            recorder: Arc::downgrade(&self.inner),
+            recorder: Arc::downgrade(self.inner.as_ref().expect("Experiment already finished")),
         }
     }
 
@@ -328,18 +328,29 @@ impl ExperimentRun {
         &mut self,
         end_status: EndExperimentStatus,
     ) -> Result<(), ExperimentTrackerError> {
+        let socket = self
+            .socket
+            .take()
+            .ok_or(ExperimentTrackerError::AlreadyFinished)?;
+
+        let inner = self
+            .inner
+            .take()
+            .ok_or(ExperimentTrackerError::AlreadyFinished)?;
+
         let completion = match end_status {
             EndExperimentStatus::Success => ExperimentCompletion::Success,
             EndExperimentStatus::Fail(reason) => ExperimentCompletion::Fail { reason },
         };
-        self.inner
+
+        inner
+            .sender
             .send(ExperimentMessage::ExperimentComplete(completion))
             .map_err(|_| ExperimentTrackerError::SocketClosed)?;
 
-        let thread_result = match self.socket.take() {
-            Some(socket) => socket.close(),
-            None => return Err(ExperimentTrackerError::AlreadyFinished),
-        };
+        drop(inner);
+
+        let thread_result = socket.join();
 
         match thread_result {
             Ok(_thread) => {}
@@ -348,14 +359,6 @@ impl ExperimentRun {
             }
             Err(ThreadError::LogFlushError(msg)) => {
                 eprintln!("Warning: Log artifact creation failed: {msg}");
-            }
-            Err(ThreadError::MessageChannelClosed) => {
-                eprintln!("Warning: Message channel closed before thread could complete");
-            }
-            Err(ThreadError::AbortError) => {
-                return Err(ExperimentTrackerError::InternalError(
-                    "Failed to abort thread.".into(),
-                ));
             }
             Err(ThreadError::Panic) => {
                 eprintln!("Warning: Experiment thread panicked");

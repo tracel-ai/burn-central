@@ -1,18 +1,14 @@
 use crate::experiment::log_store::TempLogStore;
 use burn_central_client::{ClientError, WebSocketClient, websocket::ExperimentMessage};
-use crossbeam::channel::{Receiver, Sender, select};
+use crossbeam::channel::Receiver;
 use std::thread::JoinHandle;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
-    #[error("Message channel closed unexpectedly")]
-    MessageChannelClosed,
     #[error("Log storage failed: {0}")]
     LogFlushError(ClientError),
-    #[error("Failed to abort thread")]
-    AbortError,
     #[error("Unexpected panic in thread")]
     Panic,
 }
@@ -25,7 +21,6 @@ pub struct ThreadResult {}
 struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<ExperimentMessage>,
-    abort_signal: Receiver<()>,
     log_store: TempLogStore,
 }
 
@@ -33,13 +28,11 @@ impl ExperimentThread {
     fn new(
         ws_client: WebSocketClient,
         message_receiver: Receiver<ExperimentMessage>,
-        abort_signal: Receiver<()>,
         log_store: TempLogStore,
     ) -> Self {
         Self {
             ws_client,
             message_receiver,
-            abort_signal,
             log_store,
         }
     }
@@ -55,6 +48,9 @@ impl ExperimentThread {
             .close()
             .map_err(|_| ThreadError::WebSocket(WEBSOCKET_CLOSE_ERROR.to_string()))?;
         self.log_store.flush().map_err(ThreadError::LogFlushError)?;
+        self.ws_client
+            .wait_until_closed()
+            .map_err(|e| ThreadError::WebSocket(e.to_string()))?;
         Ok(())
     }
 
@@ -74,40 +70,41 @@ impl ExperimentThread {
         self.handle_websocket_send(ExperimentMessage::Log(log))
     }
 
-    fn thread_loop(&mut self) -> Result<(), ThreadError> {
-        loop {
-            select! {
-                recv(self.abort_signal) -> _ => {
-                    return Ok(());
-                }
-                recv(self.message_receiver) -> msg => {
-                    let message = msg.map_err(|_| ThreadError::MessageChannelClosed)?;
-                    match message {
-                        ExperimentMessage::MetricsLog { .. } => {
-                            self.handle_websocket_send(message)?;
-                        }
-                        ExperimentMessage::MetricDefinitionLog { .. } => {
-                            self.handle_websocket_send(message)?;
-                        }
-                        ExperimentMessage::Log(log) => {
-                            self.handle_log_message(log)?;
-                        }
-                        ExperimentMessage::EpochSummaryLog { .. } => {
-                            self.handle_websocket_send(message)?;
-                        }
-                        value => {
-                            self.handle_websocket_send(value)?;
-                        }
-                    }
-                }
+    fn process_message(&mut self, message: ExperimentMessage) -> Result<(), ThreadError> {
+        match message {
+            ExperimentMessage::MetricsLog { .. } => {
+                self.handle_websocket_send(message)?;
+            }
+            ExperimentMessage::MetricDefinitionLog { .. } => {
+                self.handle_websocket_send(message)?;
+            }
+            ExperimentMessage::Log(log) => {
+                self.handle_log_message(log)?;
+            }
+            ExperimentMessage::EpochSummaryLog { .. } => {
+                self.handle_websocket_send(message)?;
+            }
+            value => {
+                self.handle_websocket_send(value)?;
             }
         }
+        Ok(())
+    }
+
+    fn thread_loop(&mut self) -> Result<(), ThreadError> {
+        loop {
+            match self.message_receiver.recv() {
+                Ok(message) => self.process_message(message)?,
+                Err(_) => break,
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[derive(Debug)]
 pub struct ExperimentSocket {
-    abort_sender: Sender<()>,
     handle: JoinHandle<Result<ThreadResult, ThreadError>>,
 }
 
@@ -117,19 +114,12 @@ impl ExperimentSocket {
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
     ) -> Self {
-        let (abort_sender, abort_signal) = crossbeam::channel::bounded(1);
-        let thread = ExperimentThread::new(ws_client, message_receiver, abort_signal, log_store);
+        let thread = ExperimentThread::new(ws_client, message_receiver, log_store);
         let handle = std::thread::spawn(|| thread.run());
-        Self {
-            abort_sender,
-            handle,
-        }
+        Self { handle }
     }
 
-    pub fn close(self) -> Result<ThreadResult, ThreadError> {
-        self.abort_sender
-            .send(())
-            .map_err(|_| ThreadError::AbortError)?;
+    pub fn join(self) -> Result<ThreadResult, ThreadError> {
         self.handle.join().unwrap_or(Err(ThreadError::Panic))
     }
 }
