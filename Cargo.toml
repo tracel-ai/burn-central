@@ -19,7 +19,7 @@ categories = ["development-tools"]
 
 [workspace.dependencies]
 # burn = { version = "0.20.0-pre.4", default-features = false, features = ["train"]
-burn = { version = "0.20.0-pre.6", default-features = false,  features = ["train"] }
+burn = { version = "=0.20.0-pre.6", default-features = false,  features = ["train"] }
 
 anyhow = "1.0.98"
 toml = "0.8.22"
@@ -84,4 +84,4 @@ tracel-xtask = { version = "4.5.0" }
 debug = 0 # Speed up compilation time and not necessary.
 
 [patch.crates-io]
-burn = { git = "https://github.com/tracel-ai/burn", branch = "main" }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "cc8f6d44d39b6192cd233c92f6e49134d81ab05f" }

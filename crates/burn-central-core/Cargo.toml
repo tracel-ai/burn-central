@@ -30,5 +30,5 @@ crossbeam.workspace = true
 burn-central-client.workspace = true
 
 [dev-dependencies]
-burn = { workspace = true, features = ["ndarray"] }
+burn = { workspace = true }
 anyhow = { workspace = true }
