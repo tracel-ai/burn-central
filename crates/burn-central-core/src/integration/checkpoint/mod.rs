@@ -151,11 +151,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
                 CheckpointRecordSources::new(record),
                 &settings,
             )
-            .map_err(|e| {
-                RecorderError::Unknown(format!(
-                    "Failed to record artifact: {e}.\nPlease verify that you have enough cloud storage available."
-                ))
-            })
+            .map_err(|e| RecorderError::Unknown(format!("Failed to record artifact: {e}")))
     }
 
     fn load<R>(&self, args: Self::LoadArgs, _device: &B::Device) -> Result<R, RecorderError>
