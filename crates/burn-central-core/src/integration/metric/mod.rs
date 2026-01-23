@@ -2,10 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use burn::train::logger::MetricLogger;
-use burn::train::metric::store::{EpochSummary, MetricsUpdate, Split};
-use burn::train::metric::{
-    MetricAttributes, MetricDefinition, MetricEntry, MetricId, NumericEntry,
-};
+use burn::train::metric::store::{EpochSummary, MetricsUpdate, NumericMetricUpdate, Split};
+use burn::train::metric::{MetricAttributes, MetricDefinition, MetricId, NumericEntry};
 use burn_central_client::websocket::MetricLog;
 
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
@@ -26,29 +24,13 @@ impl RemoteMetricLogger {
         }
     }
 
-    fn get_logs_from_entries(&self, entries: &[MetricEntry]) -> Vec<MetricLog> {
+    fn get_definitions_from_entries(
+        &self,
+        entries: &[NumericMetricUpdate],
+    ) -> Vec<MetricDefinition> {
         entries
             .iter()
-            .filter_map(|entry| {
-                let name = self
-                    .metric_definitions
-                    .get(&entry.metric_id)
-                    .unwrap()
-                    .name
-                    .clone();
-                let numeric_entry: NumericEntry =
-                    match NumericEntry::deserialize(&entry.serialized_entry.serialized) {
-                        Ok(e) => e,
-                        Err(_) => return None,
-                    };
-                let value = match numeric_entry {
-                    NumericEntry::Value(v) => v,
-                    NumericEntry::Aggregated {
-                        aggregated_value, ..
-                    } => aggregated_value,
-                };
-                Some(MetricLog { name, value })
-            })
+            .filter_map(|entry| self.metric_definitions.get(&entry.entry.metric_id).cloned())
             .collect()
     }
 }
@@ -63,30 +45,43 @@ impl MetricLogger for RemoteMetricLogger {
     ) {
         self.iteration_count += 1;
 
-        let entries: Vec<_> = update
-            .entries
-            .iter()
-            .chain(
-                update
-                    .entries_numeric
-                    .iter()
-                    .map(|numeric_update| &numeric_update.entry),
-            )
-            .cloned()
-            .collect();
+        let mut logs = vec![];
+        let mut summaries = vec![];
+        let definitions = self.get_definitions_from_entries(&update.entries_numeric);
+        for (i, definition) in definitions.iter().enumerate() {
+            let NumericMetricUpdate {
+                entry: _,
+                numeric_entry,
+                running_entry,
+            } = update
+                .entries_numeric
+                .get(i)
+                .expect("Definition without numeric entry");
 
-        let item_logs: Vec<MetricLog> = self.get_logs_from_entries(&entries);
-        if item_logs.is_empty() {
-            return;
-        };
+            let get_value_from_entry = |v: &NumericEntry| match *v {
+                NumericEntry::Value(v) => v,
+                NumericEntry::Aggregated {
+                    aggregated_value, ..
+                } => aggregated_value,
+            };
+            let value = get_value_from_entry(numeric_entry);
+            let running_value = get_value_from_entry(running_entry);
 
-        // send to server
-        self.experiment_handle.log_metric(
-            epoch,
-            split.to_string(),
-            self.iteration_count,
-            item_logs,
-        );
+            logs.push(MetricLog {
+                name: definition.name.clone(),
+                value,
+            });
+
+            summaries.push(MetricLog {
+                name: definition.name.clone(),
+                value: running_value,
+            });
+        }
+        self.experiment_handle
+            .log_metric(epoch, split.to_string(), self.iteration_count, logs);
+        _ = self
+            .experiment_handle
+            .log_epoch_summary(epoch, split.to_string(), summaries);
     }
 
     /// Read the logs for an epoch.
