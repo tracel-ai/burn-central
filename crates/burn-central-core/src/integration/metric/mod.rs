@@ -13,7 +13,7 @@ pub struct RemoteMetricLogger {
     experiment_handle: ExperimentRunHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,
     iteration_count: usize,
-    last_summary_receive: Option<Vec<MetricLog>>,
+    last_summaries: Option<Vec<MetricLog>>,
 }
 
 impl RemoteMetricLogger {
@@ -22,7 +22,7 @@ impl RemoteMetricLogger {
             experiment_handle: experiment.handle(),
             metric_definitions: HashMap::default(),
             iteration_count: 0,
-            last_summary_receive: None,
+            last_summaries: None,
         }
     }
 
@@ -81,7 +81,7 @@ impl MetricLogger for RemoteMetricLogger {
         }
         self.experiment_handle
             .log_metric(epoch, split.to_string(), self.iteration_count, logs);
-        self.last_summary_receive = Some(summaries);
+        self.last_summaries = Some(summaries);
     }
 
     /// Read the logs for an epoch.
@@ -115,7 +115,7 @@ impl MetricLogger for RemoteMetricLogger {
     }
 
     fn log_epoch_summary(&mut self, summary: EpochSummary) {
-        if let Some(summaries) = self.last_summary_receive.take() {
+        if let Some(summaries) = self.last_summaries.take() {
             _ = self.experiment_handle.log_epoch_summary(
                 summary.epoch_number,
                 summary.split.to_string(),
