@@ -19,5 +19,4 @@ mod checkpoint;
 mod metric;
 
 pub use checkpoint::RemoteCheckpointRecorder;
-pub use log::RemoteExperimentLoggerInstaller;
 pub use metric::RemoteMetricLogger;
