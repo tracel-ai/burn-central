@@ -50,7 +50,7 @@ pub fn training<B: AutodiffBackend>(
     config: Args<YourExperimentConfig>,
     MultiDevice(devices): MultiDevice<B>,
     loader: ArtifactLoader<ModelArtifact<B>>,
-) -> Result<Model<impl ModelArtifact<B::InnerBackend>>, String> {
+) -> Result<Model<ModelArtifact<B::InnerBackend>>, String> {
     // Log your configuration
     client.log_config("Training Config", &training_config)
         .expect("Logging config failed");
@@ -86,10 +86,6 @@ let learner = LearnerBuilder::new(artifact_dir)
     .with_metric_logger(RemoteMetricLogger::new(client))
     // Required: Remote checkpoint saving
     .with_file_checkpointer(RemoteCheckpointRecorder::new(client))
-    // Required: Remote application logging
-    .with_application_logger(Some(Box::new(
-        RemoteExperimentLoggerInstaller::new(client)
-    )))
     .num_epochs(config.num_epochs)
     .summary()
     .build(

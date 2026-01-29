@@ -6,6 +6,7 @@ use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
 use crate::params::args::{ExperimentArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
+use crate::telemetry;
 use burn_central_core::BurnCentral;
 use burn_central_core::experiment::ExperimentRun;
 use std::collections::HashMap;
@@ -228,6 +229,11 @@ impl<B: AutodiffBackend> Executor<B> {
                 routine.to_string(),
             )?;
             ctx.experiment = Some(experiment);
+            if let Some(experiment) = ctx.experiment.as_ref() {
+                if let Err(err) = telemetry::install_for_experiment(experiment) {
+                    log::warn!("Telemetry disabled: {err}");
+                }
+            }
         }
 
         let result = handler.run((), &mut ctx);

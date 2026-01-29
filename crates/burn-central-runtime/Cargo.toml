@@ -28,6 +28,8 @@ log.workspace = true
 crossbeam.workspace = true
 serde.workspace = true
 json-patch.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

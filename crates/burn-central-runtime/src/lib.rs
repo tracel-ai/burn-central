@@ -19,6 +19,7 @@ mod executor;
 mod output;
 mod params;
 mod routine;
+mod telemetry;
 mod type_name;
 
 // TODO: document inference module (probably should use the module instead)
