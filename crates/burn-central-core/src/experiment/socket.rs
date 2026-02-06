@@ -4,7 +4,7 @@ use burn_central_client::{
     ClientError, WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
-use crossbeam::channel::{Receiver, RecvTimeoutError, TryRecvError};
+use crossbeam::channel::{Receiver, RecvTimeoutError};
 use std::{thread::JoinHandle, time::Duration};
 
 #[derive(Debug, thiserror::Error)]
