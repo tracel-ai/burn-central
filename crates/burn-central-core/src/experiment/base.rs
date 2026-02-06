@@ -1,6 +1,7 @@
 use super::socket::ExperimentSocket;
 use crate::artifacts::{ArtifactKind, ExperimentArtifactClient};
 use crate::bundle::{BundleDecode, BundleEncode, InMemoryBundleReader};
+use crate::experiment::CancelToken;
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::socket::ThreadError;
@@ -139,6 +140,17 @@ impl ExperimentRunHandle {
     ) -> Result<(), ExperimentTrackerError> {
         self.try_upgrade()?.log_config(name.into(), config)
     }
+
+    /// Check whether the experiment has been cancelled (either locally or via server request).
+    /// Returns an error if the experiment has already become inactive.
+    pub fn is_cancelled(&self) -> Result<bool, ExperimentTrackerError> {
+        Ok(self.try_upgrade()?.is_cancelled())
+    }
+
+    /// Returns the experiment cancel token.
+    pub fn cancel_token(&self) -> Result<CancelToken, ExperimentTrackerError> {
+        Ok(self.try_upgrade()?.cancel_token())
+    }
 }
 
 /// Represents a recorder for an experiment, allowing logging of artifacts, metrics, and messages.
@@ -147,6 +159,7 @@ struct ExperimentRunInner {
     id: ExperimentPath,
     http_client: Client,
     sender: Sender<ExperimentMessage>,
+    cancel_token: CancelToken,
 }
 
 impl ExperimentRunInner {
@@ -268,6 +281,14 @@ impl ExperimentRunInner {
     pub fn log_error(&self, error: impl Into<String>) -> Result<(), ExperimentTrackerError> {
         self.send(ExperimentMessage::Error(error.into()))
     }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
+    pub fn cancel_token(&self) -> CancelToken {
+        self.cancel_token.clone()
+    }
 }
 
 /// Represents an experiment in Burn Central, which is a run of a machine learning model or process.
@@ -285,6 +306,8 @@ impl ExperimentRun {
         project_name: &str,
         experiment_num: i32,
     ) -> Result<Self, ExperimentTrackerError> {
+        let cancel_token = CancelToken::new();
+
         let ws_client = burn_client
             .create_experiment_run_websocket(namespace, project_name, experiment_num)
             .map_err(|e| {
@@ -298,12 +321,13 @@ impl ExperimentRun {
 
         let log_store = TempLogStore::new(burn_client.clone(), experiment_path.clone());
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(ws_client, log_store, receiver);
+        let socket = ExperimentSocket::new(ws_client, log_store, receiver, cancel_token.clone());
 
         let inner = Arc::new(ExperimentRunInner {
             id: experiment_path.clone(),
             http_client: burn_client.clone(),
             sender,
+            cancel_token: cancel_token.clone(),
         });
 
         let _handle = ExperimentRunHandle {

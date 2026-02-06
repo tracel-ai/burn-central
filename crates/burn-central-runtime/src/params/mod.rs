@@ -2,6 +2,7 @@ use variadics_please::all_tuples;
 
 pub mod args;
 pub mod artifact_loader;
+pub mod cancellation;
 pub mod default;
 
 /// This trait defines how parameters for a routine are retrieved from the execution context.

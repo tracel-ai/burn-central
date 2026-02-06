@@ -1,7 +1,11 @@
+use crate::experiment::CancelToken;
 use crate::experiment::log_store::TempLogStore;
-use burn_central_client::{ClientError, WebSocketClient, websocket::ExperimentMessage};
-use crossbeam::channel::Receiver;
-use std::thread::JoinHandle;
+use burn_central_client::{
+    ClientError, WebSocketClient,
+    websocket::{ExperimentMessage, ServerMessage},
+};
+use crossbeam::channel::{Receiver, RecvTimeoutError, TryRecvError};
+use std::{thread::JoinHandle, time::Duration};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
@@ -22,6 +26,7 @@ struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<ExperimentMessage>,
     log_store: TempLogStore,
+    cancel_token: CancelToken,
 }
 
 impl ExperimentThread {
@@ -29,11 +34,13 @@ impl ExperimentThread {
         ws_client: WebSocketClient,
         message_receiver: Receiver<ExperimentMessage>,
         log_store: TempLogStore,
+        cancel_token: CancelToken,
     ) -> Self {
         Self {
             ws_client,
             message_receiver,
             log_store,
+            cancel_token,
         }
     }
 
@@ -92,8 +99,23 @@ impl ExperimentThread {
     }
 
     fn thread_loop(&mut self) -> Result<(), ThreadError> {
-        while let Ok(message) = self.message_receiver.recv() {
-            self.process_message(message)?;
+        let poll = Duration::from_millis(50);
+
+        loop {
+            match self.ws_client.receive::<ServerMessage>() {
+                Ok(Some(ServerMessage::CancelExperiment { reason })) => {
+                    tracing::info!(%reason, "Received server cancel request - triggering cancellation token");
+                    self.cancel_token.cancel();
+                }
+                Ok(None) => {}
+                Err(e) => tracing::error!(error = ?e, "WebSocket receive error"),
+            }
+
+            match self.message_receiver.recv_timeout(poll) {
+                Ok(message) => self.process_message(message)?,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
         }
 
         Ok(())
@@ -110,9 +132,10 @@ impl ExperimentSocket {
         ws_client: WebSocketClient,
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
+        cancel_token: CancelToken,
     ) -> Self {
-        let thread = ExperimentThread::new(ws_client, message_receiver, log_store);
-        let handle = std::thread::spawn(|| thread.run());
+        let thread = ExperimentThread::new(ws_client, message_receiver, log_store, cancel_token);
+        let handle = std::thread::spawn(move || thread.run());
         Self { handle }
     }
 
