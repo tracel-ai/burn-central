@@ -103,8 +103,8 @@ impl ExperimentThread {
 
         loop {
             match self.ws_client.receive::<ServerMessage>() {
-                Ok(Some(ServerMessage::CancelExperiment { reason })) => {
-                    tracing::info!(%reason, "Received server cancel request - triggering cancellation token");
+                Ok(Some(ServerMessage::CancelRequested)) => {
+                    tracing::info!("Received server cancel request, triggering cancellation token");
                     self.cancel_token.cancel();
                 }
                 Ok(None) => {}
