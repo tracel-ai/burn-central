@@ -12,16 +12,27 @@
 //!   releasing the model between tokens to enable concurrent request processing.
 
 use burn::tensor::backend::Backend;
+use burn::tensor::{ElementConversion, Int, Shape, Tensor, TensorData};
 use burn_central_runtime::inference::{CancelToken, In, ModelAccessor, OutStream};
+use crossbeam_channel as channel;
+use serde::{Deserialize, Serialize};
+use std::any::Any;
+use std::marker::PhantomData;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, OnceLock,
+};
+use std::time::Duration;
+use tracing::{debug, info, warn};
 
 use crate::{
-    llama::Llama,
+    llama::{temperature_scaled_softmax, Llama},
     sampling::{Sampler, TopP},
     tokenizer::Tokenizer,
 };
 
 /// Request for text generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateRequest {
     pub prompt: String,
     pub max_tokens: usize,
@@ -77,7 +88,7 @@ impl GenerateRequest {
 }
 
 /// Output token with metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenOutput {
     /// The decoded token text.
     pub token: String,
@@ -85,6 +96,451 @@ pub struct TokenOutput {
     pub token_id: u32,
     /// The position in the generated sequence (0-indexed).
     pub index: usize,
+}
+
+/// Configuration for continuous batching.
+#[derive(Clone, Debug)]
+pub struct ContinuousBatchConfig {
+    /// Maximum number of concurrent sequences to batch.
+    pub max_batch_size: Option<usize>,
+    /// Max time to wait for new requests before running a decode step.
+    pub max_wait_ms: u64,
+}
+
+impl Default for ContinuousBatchConfig {
+    fn default() -> Self {
+        Self {
+            max_batch_size: None,
+            max_wait_ms: 2,
+        }
+    }
+}
+
+/// Continuous batching engine shared across inference requests.
+pub struct ContinuousBatcher<B: Backend, T: Tokenizer + Send + Sync + 'static> {
+    tx: channel::Sender<BatcherCommand>,
+    _phantom: PhantomData<(B, T)>,
+}
+
+impl<B: Backend, T: Tokenizer + Send + Sync + 'static> ContinuousBatcher<B, T> {
+    pub fn new(model: ModelAccessor<Llama<B, T>>, config: ContinuousBatchConfig) -> Arc<Self> {
+        let (tx, rx) = channel::unbounded();
+        std::thread::spawn(move || run_continuous_batcher(model, rx, config));
+        Arc::new(Self {
+            tx,
+            _phantom: PhantomData,
+        })
+    }
+
+    fn submit(
+        &self,
+        request: GenerateRequest,
+        reply: channel::Sender<BatcherEvent>,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        self.tx
+            .send(BatcherCommand::Submit {
+                request,
+                reply,
+                cancel_flag,
+            })
+            .map_err(|_| "Continuous batcher unavailable".to_string())
+    }
+}
+
+enum BatcherCommand {
+    Submit {
+        request: GenerateRequest,
+        reply: channel::Sender<BatcherEvent>,
+        cancel_flag: Arc<AtomicBool>,
+    },
+}
+
+enum BatcherEvent {
+    Token(TokenOutput),
+    Done,
+    Error(String),
+}
+
+struct PendingRequest {
+    id: u64,
+    request: GenerateRequest,
+    reply: channel::Sender<BatcherEvent>,
+    cancel_flag: Arc<AtomicBool>,
+}
+
+struct ActiveRequest {
+    id: u64,
+    slot: usize,
+    max_tokens: usize,
+    generated: usize,
+    temperature: f64,
+    sampler: Sampler,
+    pending_input: u32,
+    reply: channel::Sender<BatcherEvent>,
+    cancel_flag: Arc<AtomicBool>,
+}
+
+static CONTINUOUS_BATCHER: OnceLock<Box<dyn Any + Send + Sync>> = OnceLock::new();
+
+fn get_or_init_batcher<B: Backend + 'static, T: Tokenizer + Send + Sync + 'static>(
+    model: ModelAccessor<Llama<B, T>>,
+) -> Result<Arc<ContinuousBatcher<B, T>>, String> {
+    let stored = CONTINUOUS_BATCHER.get_or_init(|| {
+        let batcher = ContinuousBatcher::new(model, ContinuousBatchConfig::default());
+        Box::new(batcher) as Box<dyn Any + Send + Sync>
+    });
+
+    stored
+        .downcast_ref::<Arc<ContinuousBatcher<B, T>>>()
+        .cloned()
+        .ok_or_else(|| {
+            "Continuous batcher already initialized with a different model type".to_string()
+        })
+}
+
+fn run_continuous_batcher<B: Backend + 'static, T: Tokenizer + Send + Sync + 'static>(
+    model: ModelAccessor<Llama<B, T>>,
+    rx: channel::Receiver<BatcherCommand>,
+    config: ContinuousBatchConfig,
+) {
+    let stop_ids = model.submit(|m| m.tokenizer.stop_ids());
+    let capacity = model.submit(|m| m.cache.get(0).map(|c| c.lens().len()).unwrap_or(0));
+    let max_batch_size = config.max_batch_size.unwrap_or(capacity).min(capacity);
+
+    let mut free_slots: Vec<usize> = (0..max_batch_size).collect();
+    let mut active: Vec<ActiveRequest> = Vec::new();
+    let mut pending: Vec<PendingRequest> = Vec::new();
+    let mut next_request_id: u64 = 1;
+
+    info!(
+        "continuous batcher started: capacity={}, max_batch_size={}, max_wait_ms={}",
+        capacity, max_batch_size, config.max_wait_ms
+    );
+
+    loop {
+        if active.is_empty() && pending.is_empty() {
+            match rx.recv() {
+                Ok(cmd) => {
+                    let BatcherCommand::Submit {
+                        request,
+                        reply,
+                        cancel_flag,
+                    } = cmd;
+                    let id = next_request_id;
+                    next_request_id += 1;
+                    debug!("request queued: id={}", id);
+                    pending.push(PendingRequest {
+                        id,
+                        request,
+                        reply,
+                        cancel_flag,
+                    });
+                }
+                Err(_) => break,
+            }
+        } else if pending.is_empty() {
+            if let Ok(cmd) = rx.recv_timeout(Duration::from_millis(config.max_wait_ms)) {
+                let BatcherCommand::Submit {
+                    request,
+                    reply,
+                    cancel_flag,
+                } = cmd;
+                let id = next_request_id;
+                next_request_id += 1;
+                debug!("request queued: id={}", id);
+                pending.push(PendingRequest {
+                    id,
+                    request,
+                    reply,
+                    cancel_flag,
+                });
+            }
+        }
+
+        while let Ok(cmd) = rx.try_recv() {
+            let BatcherCommand::Submit {
+                request,
+                reply,
+                cancel_flag,
+            } = cmd;
+            let id = next_request_id;
+            next_request_id += 1;
+            debug!("request queued: id={}", id);
+            pending.push(PendingRequest {
+                id,
+                request,
+                reply,
+                cancel_flag,
+            });
+        }
+
+        if max_batch_size == 0 {
+            for pending_req in pending.drain(..) {
+                let _ = pending_req.reply.send(BatcherEvent::Error(
+                    "Continuous batching not available (max_batch_size=0)".to_string(),
+                ));
+            }
+            continue;
+        }
+
+        // Prefill pending requests while slots are available.
+        let mut idx = 0;
+        while idx < pending.len() && !free_slots.is_empty() {
+            let slot = free_slots.pop().unwrap();
+            let pending_req = pending.swap_remove(idx);
+
+            debug!(
+                "assign slot: id={}, slot={}, pending={}, active={}, free={}",
+                pending_req.id,
+                slot,
+                pending.len(),
+                active.len(),
+                free_slots.len()
+            );
+
+            if pending_req.cancel_flag.load(Ordering::Relaxed) {
+                let _ = pending_req
+                    .reply
+                    .send(BatcherEvent::Error("Generation cancelled".to_string()));
+                free_slots.push(slot);
+                continue;
+            }
+
+            if pending_req.request.max_tokens == 0 {
+                let _ = pending_req.reply.send(BatcherEvent::Done);
+                free_slots.push(slot);
+                continue;
+            }
+
+            model.submit(move |m| m.reset_cache_slot(slot));
+
+            let mut sampler = if pending_req.request.temperature > 0.0 {
+                Sampler::TopP(TopP::new(
+                    pending_req.request.top_p,
+                    pending_req.request.seed,
+                ))
+            } else {
+                Sampler::Argmax
+            };
+
+            let request_id = pending_req.id;
+            let prompt = pending_req.request.prompt.clone();
+            let temperature = pending_req.request.temperature;
+            let (prefill_result, returned_sampler) = model.submit(move |llama_model| {
+                let prompt_tokens = llama_model.tokenize(&prompt);
+                let prompt_len = prompt_tokens.dims()[0];
+                debug!("prefill tokenize: id={}, prompt_len={}", request_id, prompt_len);
+                if prompt_len == 0 {
+                    return (Err("Prompt produced no tokens".to_string()), sampler);
+                }
+                let input = prompt_tokens.reshape([1, prompt_len]);
+                let logits = llama_model.prefill_slot(slot, input);
+                let [_batch, seq_len, _vocab_size] = logits.dims();
+                let mut next_token_logits =
+                    logits.slice([0..1, seq_len - 1..seq_len]).squeeze_dim(1);
+
+                if temperature > 0.0 {
+                    next_token_logits = temperature_scaled_softmax(next_token_logits, temperature);
+                }
+
+                let next_token = sampler
+                    .sample(next_token_logits)
+                    .squeeze_dim::<1>(0);
+                let token_id = next_token
+                    .clone()
+                    .into_data()
+                    .as_slice::<B::IntElem>()
+                    .unwrap()[0]
+                    .elem::<u32>();
+                let token_text = llama_model.tokenizer.decode(vec![token_id]);
+                (Ok((token_id, token_text)), sampler)
+            });
+
+            sampler = returned_sampler;
+
+            let (token_id, token_text) = match prefill_result {
+                Ok(result) => result,
+                Err(err) => {
+                    warn!("prefill failed: id={}, err={}", pending_req.id, err);
+                    let _ = pending_req.reply.send(BatcherEvent::Error(err));
+                    free_slots.push(slot);
+                    continue;
+                }
+            };
+
+            let is_stop = stop_ids.contains(&token_id);
+            if is_stop {
+                debug!("prefill stop token: id={}", pending_req.id);
+                let _ = pending_req.reply.send(BatcherEvent::Done);
+                free_slots.push(slot);
+                continue;
+            }
+
+            let token_output = TokenOutput {
+                token: token_text,
+                token_id,
+                index: 0,
+            };
+
+            if pending_req
+                .reply
+                .send(BatcherEvent::Token(token_output))
+                .is_err()
+            {
+                warn!("prefill emit failed: id={}", pending_req.id);
+                free_slots.push(slot);
+                continue;
+            }
+
+            if 1 >= pending_req.request.max_tokens {
+                debug!("request completed at prefill: id={}", pending_req.id);
+                let _ = pending_req.reply.send(BatcherEvent::Done);
+                free_slots.push(slot);
+                continue;
+            }
+
+            active.push(ActiveRequest {
+                id: pending_req.id,
+                slot,
+                max_tokens: pending_req.request.max_tokens,
+                generated: 1,
+                temperature,
+                sampler,
+                pending_input: token_id,
+                reply: pending_req.reply,
+                cancel_flag: pending_req.cancel_flag,
+            });
+        }
+
+        // Remove cancelled requests before decoding.
+        let mut i = 0;
+        while i < active.len() {
+            if active[i].cancel_flag.load(Ordering::Relaxed) {
+                let req = active.swap_remove(i);
+                debug!("request cancelled: id={}", req.id);
+                let _ = req
+                    .reply
+                    .send(BatcherEvent::Error("Generation cancelled".to_string()));
+                model.submit(move |m| m.reset_cache_slot(req.slot));
+                free_slots.push(req.slot);
+                continue;
+            }
+            i += 1;
+        }
+
+        if active.is_empty() {
+            continue;
+        }
+
+        let batch_size = active.len();
+        debug!(
+            "decode step: batch_size={}, pending={}, free={}",
+            batch_size,
+            pending.len(),
+            free_slots.len()
+        );
+        let mut slots: Vec<usize> = Vec::with_capacity(batch_size);
+        let mut input_ids: Vec<u32> = Vec::with_capacity(batch_size);
+        let mut temperatures: Vec<f64> = Vec::with_capacity(batch_size);
+        let mut samplers: Vec<Sampler> = Vec::with_capacity(batch_size);
+
+        for req in active.iter_mut() {
+            slots.push(req.slot);
+            input_ids.push(req.pending_input);
+            temperatures.push(req.temperature);
+            samplers.push(std::mem::replace(&mut req.sampler, Sampler::Argmax));
+        }
+
+        let (results, returned_samplers) = model.submit(move |llama_model| {
+            let input = Tensor::<B, 2, Int>::from_data(
+                TensorData::new(input_ids, Shape::new([batch_size, 1])),
+                &llama_model.device,
+            );
+            let logits = llama_model.decode_batch_with_slots(input, &slots);
+            let [_batch, seq_len, _vocab_size] = logits.dims();
+
+            let mut outputs: Vec<(u32, String)> = Vec::with_capacity(batch_size);
+            for i in 0..batch_size {
+                let mut next_token_logits = logits
+                    .clone()
+                    .slice([i..i + 1, seq_len - 1..seq_len])
+                    .squeeze_dim(1);
+
+                if temperatures[i] > 0.0 {
+                    next_token_logits =
+                        temperature_scaled_softmax(next_token_logits, temperatures[i]);
+                }
+
+                let next_token = samplers[i]
+                    .sample(next_token_logits)
+                    .squeeze_dim::<1>(0);
+                let token_id = next_token
+                    .clone()
+                    .into_data()
+                    .as_slice::<B::IntElem>()
+                    .unwrap()[0]
+                    .elem::<u32>();
+                let token_text = llama_model.tokenizer.decode(vec![token_id]);
+                outputs.push((token_id, token_text));
+            }
+            (outputs, samplers)
+        });
+
+        for (req, sampler) in active.iter_mut().zip(returned_samplers.into_iter()) {
+            req.sampler = sampler;
+        }
+
+        let mut to_remove: Vec<usize> = Vec::new();
+        for (i, (token_id, token_text)) in results.into_iter().enumerate() {
+            let req = &mut active[i];
+
+            if req.cancel_flag.load(Ordering::Relaxed) {
+                debug!("request cancelled during decode: id={}", req.id);
+                let _ = req
+                    .reply
+                    .send(BatcherEvent::Error("Generation cancelled".to_string()));
+                to_remove.push(i);
+                continue;
+            }
+
+            let is_stop = stop_ids.contains(&token_id);
+            if is_stop {
+                debug!("stop token reached: id={}", req.id);
+                let _ = req.reply.send(BatcherEvent::Done);
+                to_remove.push(i);
+                continue;
+            }
+
+            let index = req.generated;
+            let token_output = TokenOutput {
+                token: token_text,
+                token_id,
+                index,
+            };
+
+            if req.reply.send(BatcherEvent::Token(token_output)).is_err() {
+                warn!("emit failed: id={}", req.id);
+                to_remove.push(i);
+                continue;
+            }
+
+            req.generated += 1;
+            if req.generated >= req.max_tokens {
+                debug!("request completed: id={}", req.id);
+                let _ = req.reply.send(BatcherEvent::Done);
+                to_remove.push(i);
+            } else {
+                req.pending_input = token_id;
+            }
+        }
+
+        for idx in to_remove.into_iter().rev() {
+            let req = active.swap_remove(idx);
+            model.submit(move |m| m.reset_cache_slot(req.slot));
+            free_slots.push(req.slot);
+        }
+    }
 }
 
 /// Original streaming handler - blocks the model for entire generation.
@@ -215,6 +671,50 @@ pub fn concurrent_streaming_handler<B: Backend, T: Tokenizer + 'static>(
         }
 
         // Model is now free for other requests to use
+    }
+
+    Ok(())
+}
+
+/// Continuous batched streaming handler.
+///
+/// This handler uses a shared background batcher to combine requests into
+/// dynamic batches. It supports mid-stream joins, cancellation, and token
+/// streaming while keeping the GPU busy.
+///
+/// **Note:** A single global batcher is created per process. Mixing multiple
+/// model types in the same process is not supported by this handler.
+pub fn continuous_batched_streaming_handler<
+    B: Backend + 'static,
+    T: Tokenizer + Send + Sync + 'static,
+>(
+    In(request): In<GenerateRequest>,
+    model: ModelAccessor<Llama<B, T>>,
+    cancel: CancelToken,
+    output: OutStream<TokenOutput>,
+) -> Result<(), String> {
+    let batcher = get_or_init_batcher(model)?;
+    let (reply_tx, reply_rx) = channel::unbounded();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+
+    batcher.submit(request, reply_tx, cancel_flag.clone())?;
+
+    loop {
+        if cancel.is_cancelled() {
+            cancel_flag.store(true, Ordering::Relaxed);
+        }
+
+        match reply_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(BatcherEvent::Token(token)) => {
+                output
+                    .emit(token)
+                    .map_err(|e| format!("Failed to emit token: {}", e.source))?;
+            }
+            Ok(BatcherEvent::Done) => break,
+            Ok(BatcherEvent::Error(err)) => return Err(err),
+            Err(channel::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        }
     }
 
     Ok(())

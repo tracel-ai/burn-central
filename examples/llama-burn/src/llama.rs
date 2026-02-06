@@ -691,7 +691,7 @@ impl<B: Backend, T: Tokenizer> Llama<B, T> {
     }
 
     /// Encode a string into a tensor of tokens.
-    fn tokenize(&self, text: &str) -> Tensor<B, 1, Int> {
+    pub(crate) fn tokenize(&self, text: &str) -> Tensor<B, 1, Int> {
         let bos = !cfg!(feature = "tiny"); // TinyLlama Chat doesn't prepend BOS token with the chat format
         let tokens = self.tokenizer.encode(text, bos, false);
 
@@ -732,6 +732,33 @@ impl<B: Backend, T: Tokenizer> Llama<B, T> {
     /// Reset the model state (used between generations)
     pub fn reset(&mut self) {
         self.cache.iter_mut().for_each(|cache| cache.reset());
+    }
+
+    /// Reset the KV cache for a specific slot (for continuous batching).
+    pub(crate) fn reset_cache_slot(&mut self, slot: usize) {
+        self.cache
+            .iter_mut()
+            .for_each(|cache| cache.reset_slot(slot));
+    }
+
+    /// Prefill a single cache slot with a full prompt (batch size = 1).
+    pub(crate) fn prefill_slot(
+        &mut self,
+        slot: usize,
+        input_tokens: Tensor<B, 2, Int>,
+    ) -> Tensor<B, 3> {
+        self.model
+            .forward_prefill_slot(input_tokens, &mut self.cache, &self.rope, slot)
+    }
+
+    /// Decode a single token for a batch of slots (seq_len = 1).
+    pub(crate) fn decode_batch_with_slots(
+        &mut self,
+        input_tokens: Tensor<B, 2, Int>,
+        slots: &[usize],
+    ) -> Tensor<B, 3> {
+        self.model
+            .forward_decode_batch(input_tokens, &mut self.cache, &self.rope, slots)
     }
 
     /// Generate tokens one at a time, calling the callback for each token.
@@ -1240,6 +1267,22 @@ pub(crate) fn temperature_scaled_softmax<B: Backend>(
     temperature: f64,
 ) -> Tensor<B, 2> {
     softmax(logits / temperature, 1)
+}
+
+/// Build a chat-style prompt with a system message for Llama models.
+///
+/// For Llama 3, this uses the official chat template tokens.
+/// For other models, it falls back to a simple plain-text format.
+pub fn build_chat_prompt(system: &str, user: &str) -> String {
+    if cfg!(feature = "llama3") {
+        format!(
+            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n{system}<|eot_id|>\
+<|start_header_id|>user<|end_header_id|>\n{user}<|eot_id|>\
+<|start_header_id|>assistant<|end_header_id|>\n"
+        )
+    } else {
+        format!("System: {}\nUser: {}\nAssistant:", system, user)
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use burn::{
         Embedding, EmbeddingConfig, Linear, LinearConfig, RmsNorm, RmsNormConfig, RotaryEncoding,
         SwiGlu, SwiGluConfig,
     },
-    tensor::{activation::softmax, backend::Backend, Bool, Device, Int, Tensor},
+    tensor::{activation::softmax, backend::Backend, Bool, Device, Int, Shape, Tensor, TensorData},
 };
 
 use crate::cache::AutoregressiveCache;
@@ -92,6 +92,42 @@ impl<B: Backend> Transformer<B> {
         let h = self.norm.forward(h);
         self.output.forward(h)
     }
+
+    /// Forward pass to prefill a single cache slot (batch size = 1).
+    pub fn forward_prefill_slot(
+        &self,
+        input: Tensor<B, 2, Int>,
+        cache: &mut Vec<KeyValueCache<B>>,
+        rope: &RotaryEncoding<B>,
+        slot: usize,
+    ) -> Tensor<B, 3> {
+        let mut h = self.tok_embeddings.forward(input);
+
+        for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
+            h = layer.forward_prefill_slot(h, c, rope, slot);
+        }
+
+        let h = self.norm.forward(h);
+        self.output.forward(h)
+    }
+
+    /// Forward pass for a batched decode step (seq_len = 1) with arbitrary cache slots.
+    pub fn forward_decode_batch(
+        &self,
+        input: Tensor<B, 2, Int>,
+        cache: &mut Vec<KeyValueCache<B>>,
+        rope: &RotaryEncoding<B>,
+        slots: &[usize],
+    ) -> Tensor<B, 3> {
+        let mut h = self.tok_embeddings.forward(input);
+
+        for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
+            h = layer.forward_decode_batch(h, c, rope, slots);
+        }
+
+        let h = self.norm.forward(h);
+        self.output.forward(h)
+    }
 }
 
 /// Configuration to create a [decoder-only transformer block](TransformerBlock).
@@ -157,6 +193,34 @@ impl<B: Backend> TransformerBlock<B> {
             + self
                 .attention
                 .forward(self.attention_norm.forward(input), cache, rope);
+        h.clone() + self.feed_forward.forward(self.ffn_norm.forward(h))
+    }
+
+    pub fn forward_prefill_slot(
+        &self,
+        input: Tensor<B, 3>,
+        cache: &mut KeyValueCache<B>,
+        rope: &RotaryEncoding<B>,
+        slot: usize,
+    ) -> Tensor<B, 3> {
+        let h = input.clone()
+            + self
+                .attention
+                .forward_prefill_slot(self.attention_norm.forward(input), cache, rope, slot);
+        h.clone() + self.feed_forward.forward(self.ffn_norm.forward(h))
+    }
+
+    pub fn forward_decode_batch(
+        &self,
+        input: Tensor<B, 3>,
+        cache: &mut KeyValueCache<B>,
+        rope: &RotaryEncoding<B>,
+        slots: &[usize],
+    ) -> Tensor<B, 3> {
+        let h = input.clone()
+            + self
+                .attention
+                .forward_decode_batch(self.attention_norm.forward(input), cache, rope, slots);
         h.clone() + self.feed_forward.forward(self.ffn_norm.forward(h))
     }
 }
@@ -244,10 +308,32 @@ impl<B: Backend> KeyValueCache<B> {
         (k, v)
     }
 
+    /// Computes keys and values for a single cache slot (batch size = 1).
+    pub fn forward_single_slot(
+        &mut self,
+        slot: usize,
+        key: Tensor<B, 4>,
+        value: Tensor<B, 4>,
+    ) -> (Tensor<B, 4>, Tensor<B, 4>) {
+        let k = self.key.forward_single_slot(slot, key);
+        let v = self.value.forward_single_slot(slot, value);
+        (k, v)
+    }
+
     /// Returns the cached sequence length.
     pub fn len(&self) -> usize {
         // We can assume key and value have the same length
         self.key.len()
+    }
+
+    /// Returns the cached sequence length for a specific slot.
+    pub fn len_at(&self, slot: usize) -> usize {
+        self.key.len_at(slot)
+    }
+
+    /// Returns cached sequence lengths for all slots.
+    pub fn lens(&self) -> &[usize] {
+        self.key.lens()
     }
 
     /// Reset key-value cache.
@@ -256,6 +342,12 @@ impl<B: Backend> KeyValueCache<B> {
     pub fn reset(&mut self) {
         self.key.reset();
         self.value.reset();
+    }
+
+    /// Reset a specific cache slot.
+    pub fn reset_slot(&mut self, slot: usize) {
+        self.key.reset_slot(slot);
+        self.value.reset_slot(slot);
     }
 }
 
@@ -391,6 +483,204 @@ impl<B: Backend> MultiHeadAttention<B> {
         self.wo.forward(output)
     }
 
+    /// Forward pass to prefill a single cache slot (batch size = 1).
+    pub fn forward_prefill_slot(
+        &self,
+        input: Tensor<B, 3>,
+        cache: &mut KeyValueCache<B>,
+        rope: &RotaryEncoding<B>,
+        slot: usize,
+    ) -> Tensor<B, 3> {
+        let device = input.device();
+        let [batch_size, seq_len, hidden_size] = input.dims();
+        assert_eq!(
+            batch_size, 1,
+            "prefill slot expects batch size 1, got {}",
+            batch_size
+        );
+
+        let q = self.wq.forward(input.clone());
+        let k = self.wk.forward(input.clone());
+        let v = self.wv.forward(input);
+
+        // [batch_size, num_heads, seq_len, head_dim]
+        let q = q
+            .reshape([batch_size, seq_len, self.n_heads, self.head_dim])
+            .swap_dims(1, 2);
+        let k = k
+            .reshape([batch_size, seq_len, self.n_kv_heads, self.head_dim])
+            .swap_dims(1, 2);
+        let v = v
+            .reshape([batch_size, seq_len, self.n_kv_heads, self.head_dim])
+            .swap_dims(1, 2);
+
+        // Sequence start position is based on the cache slot
+        let cache_seq_len = cache.len_at(slot);
+
+        let q = rope.apply(q, cache_seq_len);
+        let k = rope.apply(k, cache_seq_len);
+
+        // Key-value caching for this slot
+        let (k, v) = cache.forward_single_slot(slot, k, v);
+
+        // Repeat key/value heads if num_kv_heads < num_heads
+        let k = self.repeat_kv(k);
+        let v = self.repeat_kv(v);
+
+        // Attention scores
+        let mut scores = q
+            .matmul(k.swap_dims(2, 3))
+            .div_scalar((self.head_dim as f32).sqrt());
+
+        if seq_len > 1 {
+            let cache_seq_len = cache.len_at(slot);
+            let mask = Tensor::<B, 2, Bool>::tril_mask(
+                [seq_len, cache_seq_len],
+                (cache_seq_len - seq_len) as i64,
+                &device,
+            );
+            scores = scores.mask_fill(mask.unsqueeze::<4>(), f32::NEG_INFINITY);
+        }
+
+        let scores = softmax(scores, 3);
+
+        // Output [batch_size, num_heads, seq_len, head_dim]
+        let output = scores.matmul(v);
+        let output = output
+            .swap_dims(1, 2)
+            .reshape([batch_size, seq_len, hidden_size]);
+        self.wo.forward(output)
+    }
+
+    /// Forward pass for a batched decode step (seq_len = 1) with arbitrary cache slots.
+    pub fn forward_decode_batch(
+        &self,
+        input: Tensor<B, 3>,
+        cache: &mut KeyValueCache<B>,
+        rope: &RotaryEncoding<B>,
+        slots: &[usize],
+    ) -> Tensor<B, 3> {
+        let device = input.device();
+        let [batch_size, seq_len, hidden_size] = input.dims();
+        assert_eq!(
+            batch_size,
+            slots.len(),
+            "decode batch expects batch_size == slots.len()"
+        );
+        assert_eq!(seq_len, 1, "decode batch expects seq_len == 1");
+
+        let q = self.wq.forward(input.clone());
+        let k = self.wk.forward(input.clone());
+        let v = self.wv.forward(input);
+
+        // [batch_size, num_heads, seq_len, head_dim]
+        let q = q
+            .reshape([batch_size, seq_len, self.n_heads, self.head_dim])
+            .swap_dims(1, 2);
+        let k = k
+            .reshape([batch_size, seq_len, self.n_kv_heads, self.head_dim])
+            .swap_dims(1, 2);
+        let v = v
+            .reshape([batch_size, seq_len, self.n_kv_heads, self.head_dim])
+            .swap_dims(1, 2);
+
+        let mut q_rope = q.clone();
+
+        let mut cached_k: Vec<Tensor<B, 4>> = Vec::with_capacity(batch_size);
+        let mut cached_v: Vec<Tensor<B, 4>> = Vec::with_capacity(batch_size);
+        let mut lengths: Vec<usize> = Vec::with_capacity(batch_size);
+
+        for (i, &slot) in slots.iter().enumerate() {
+            let q_i = q.clone().slice([
+                i..i + 1,
+                0..self.n_heads,
+                0..seq_len,
+                0..self.head_dim,
+            ]);
+            let k_i = k.clone().slice([
+                i..i + 1,
+                0..self.n_kv_heads,
+                0..seq_len,
+                0..self.head_dim,
+            ]);
+            let v_i = v.clone().slice([
+                i..i + 1,
+                0..self.n_kv_heads,
+                0..seq_len,
+                0..self.head_dim,
+            ]);
+
+            let offset = cache.len_at(slot);
+            let q_i = rope.apply(q_i, offset);
+            let k_i = rope.apply(k_i, offset);
+
+            q_rope = q_rope.slice_assign(
+                [
+                    i..i + 1,
+                    0..self.n_heads,
+                    0..seq_len,
+                    0..self.head_dim,
+                ],
+                q_i.clone(),
+            );
+
+            let (k_cached, v_cached) = cache.forward_single_slot(slot, k_i, v_i);
+            let k_cached = self.repeat_kv(k_cached);
+            let v_cached = self.repeat_kv(v_cached);
+            let len = cache.len_at(slot);
+            cached_k.push(k_cached);
+            cached_v.push(v_cached);
+            lengths.push(len);
+        }
+
+        let max_len = lengths.iter().copied().max().unwrap_or(0);
+        let mut k_batch = Tensor::<B, 4>::zeros(
+            [batch_size, self.n_heads, max_len, self.head_dim],
+            &device,
+        );
+        let mut v_batch = Tensor::<B, 4>::zeros(
+            [batch_size, self.n_heads, max_len, self.head_dim],
+            &device,
+        );
+
+        for i in 0..batch_size {
+            let len = lengths[i];
+            if len == 0 {
+                continue;
+            }
+            k_batch = k_batch.slice_assign(
+                [i..i + 1, 0..self.n_heads, 0..len, 0..self.head_dim],
+                cached_k[i].clone(),
+            );
+            v_batch = v_batch.slice_assign(
+                [i..i + 1, 0..self.n_heads, 0..len, 0..self.head_dim],
+                cached_v[i].clone(),
+            );
+        }
+
+        let mut scores = q_rope
+            .matmul(k_batch.swap_dims(2, 3))
+            .div_scalar((self.head_dim as f32).sqrt());
+
+        if max_len > 0 {
+            let mask = Self::build_decode_mask::<B>(
+                batch_size,
+                self.n_heads,
+                max_len,
+                &lengths,
+                &device,
+            );
+            scores = scores.mask_fill(mask, f32::NEG_INFINITY);
+        }
+
+        let scores = softmax(scores, 3);
+        let output = scores.matmul(v_batch);
+        let output = output
+            .swap_dims(1, 2)
+            .reshape([batch_size, seq_len, hidden_size]);
+        self.wo.forward(output)
+    }
+
     /// Repeats a key or value tensor for grouped query attention.
     fn repeat_kv(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
         let n_rep = self.n_heads / self.n_kv_heads;
@@ -403,6 +693,26 @@ impl<B: Backend> MultiHeadAttention<B> {
                 .expand([batch_size, num_kv_heads, n_rep, seq_len, head_dim])
                 .reshape([batch_size, num_kv_heads * n_rep, seq_len, head_dim])
         }
+    }
+
+    fn build_decode_mask<BB: Backend>(
+        batch_size: usize,
+        num_heads: usize,
+        max_len: usize,
+        lengths: &[usize],
+        device: &Device<BB>,
+    ) -> Tensor<BB, 4, Bool> {
+        let mut data: Vec<bool> = Vec::with_capacity(batch_size * num_heads * max_len);
+        for b in 0..batch_size {
+            let len = lengths[b];
+            for _h in 0..num_heads {
+                for pos in 0..max_len {
+                    data.push(pos >= len);
+                }
+            }
+        }
+        let shape = Shape::new([batch_size, num_heads, 1, max_len]);
+        Tensor::<BB, 4, Bool>::from_data(TensorData::new(data, shape), device)
     }
 }
 

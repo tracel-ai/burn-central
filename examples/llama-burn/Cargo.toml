@@ -27,6 +27,7 @@ burn-central = { workspace = true }
 burn-central-runtime = { workspace = true }
 burn = { workspace = true, default-features = false, features = ["std"] }
 burn-import = { version = "0.20.0-pre.4", optional = true }
+tracing = { version = "0.1.40", default-features = false, features = ["std"] }
 
 itertools = { version = "0.12.1", default-features = false, features = [
     "use_alloc",
@@ -52,9 +53,28 @@ rand = { version = "0.8.5", default-features = false, features = [
     "std_rng",
 ] } # std_rng is for no_std
 
+crossbeam-channel = { version = "0.5.15" }
+
 [dev-dependencies]
 burn = { workspace = true, default-features = false }
 clap = { version = "4.5.4", features = ["derive"] }
+async-stream = { version = "0.3.5" }
+axum = { version = "0.7.5" }
+futures-util = { version = "0.3.30" }
+reqwest = { version = "0.12.7", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+] }
+serde_json = { version = "1.0.117" }
+tokio = { version = "1.38.0", features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "net",
+] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [[example]]
 name = "llama-burn-inference"
