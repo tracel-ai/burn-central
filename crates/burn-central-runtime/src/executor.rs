@@ -9,6 +9,7 @@ use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine}
 use crate::telemetry;
 use burn_central_core::BurnCentral;
 use burn_central_core::experiment::{CancelToken, ExperimentRun};
+use serde_json;
 use std::collections::HashMap;
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
@@ -234,6 +235,13 @@ impl<B: AutodiffBackend> Executor<B> {
                 code_version,
                 routine.to_string(),
             )?;
+            println!(
+                "{}",
+                serde_json::to_string(
+                    &serde_json::json!({"experiment_num": experiment.experiment_num})
+                )
+                .unwrap()
+            );
             ctx.cancel_token = experiment
                 .cancel_token()
                 .expect("Experiment reference should be valid");

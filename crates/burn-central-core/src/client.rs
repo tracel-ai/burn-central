@@ -160,7 +160,6 @@ impl BurnCentral {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,
             })?;
-        println!("Experiment num: {}", experiment.experiment_num);
 
         ExperimentRun::new(
             self.client.clone(),
