@@ -348,6 +348,10 @@ impl ExperimentRun {
         }
     }
 
+    pub fn id(&self) -> &ExperimentPath {
+        &self.inner.as_ref().expect("Experiment already finished").id
+    }
+
     fn finish_internal(
         &mut self,
         end_status: EndExperimentStatus,

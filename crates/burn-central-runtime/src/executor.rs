@@ -235,11 +235,15 @@ impl<B: AutodiffBackend> Executor<B> {
                 code_version,
                 routine.to_string(),
             )?;
+
+            let exp_id = experiment.id();
             println!(
                 "{}",
-                serde_json::to_string(
-                    &serde_json::json!({"experiment_num": experiment.experiment_num})
-                )
+                serde_json::to_string(&serde_json::json!({
+                    "namespace": ctx.namespace(),
+                    "project": ctx.project(),
+                    "experiment_num": exp_id.experiment_num(),
+                }))
                 .unwrap()
             );
             ctx.cancel_token = experiment
