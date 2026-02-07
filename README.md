@@ -25,7 +25,7 @@ Add Burn Central to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-burn-central = "0.1.0"
+burn-central = "0.5.0"
 ```
 
 ## Quick Start
@@ -118,4 +118,3 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
-
