@@ -68,8 +68,8 @@ tracing-core = "0.1.33"
 tracing-subscriber = "0.3.20"
 
 ## External Crate
-burn-central-client = { version = "0.4.0", path = "../burn-central-client/burn-central-client" }
-# burn-central-client = "0.3.3"
+# burn-central-client = { version = "0.4.0", path = "../client/burn-central-client" }
+burn-central-client = "0.4.0"
 
 ## Crate
 burn-central-core = { path = "crates/burn-central-core", version = "0.5.0" }
