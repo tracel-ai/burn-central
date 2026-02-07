@@ -25,7 +25,7 @@ Add Burn Central to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-burn-central = "0.1.0"
+burn-central = "0.5.0"
 ```
 
 ## Quick Start
@@ -70,10 +70,10 @@ pub fn training<B: AutodiffBackend>(
 To enable experiment tracking, you need to add three key components to your `LearnerBuilder`:
 
 ```rust
-use burn_central::{
-    log::RemoteExperimentLoggerInstaller,
-    metrics::RemoteMetricLogger,
-    record::RemoteCheckpointRecorder,
+use burn_central::integration::{
+    RemoteMetricLogger,
+    remote_interrupter,
+    RemoteCheckpointRecorder,
 };
 use burn::train::{LearnerBuilder, metric::{AccuracyMetric, LossMetric}};
 
@@ -82,10 +82,12 @@ let learner = LearnerBuilder::new(artifact_dir)
     .metric_valid_numeric(AccuracyMetric::new())
     .metric_train_numeric(LossMetric::new())
     .metric_valid_numeric(LossMetric::new())
-    // Required: Remote metric logging
+    // Remote metric logging
     .with_metric_logger(RemoteMetricLogger::new(client))
-    // Required: Remote checkpoint saving
+    // Remote checkpoint saving
     .with_file_checkpointer(RemoteCheckpointRecorder::new(client))
+    // Remote interruption handling
+    .with_interrupter(remote_interrupter(client))
     .num_epochs(config.num_epochs)
     .summary()
     .build(
@@ -118,4 +120,3 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
-
