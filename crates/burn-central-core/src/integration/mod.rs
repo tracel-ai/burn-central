@@ -16,7 +16,9 @@
 //!
 
 mod checkpoint;
+mod interrupter;
 mod metric;
 
 pub use checkpoint::RemoteCheckpointRecorder;
+pub use interrupter::remote_interrupter;
 pub use metric::RemoteMetricLogger;

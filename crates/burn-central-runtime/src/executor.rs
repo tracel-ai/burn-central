@@ -8,7 +8,7 @@ use crate::params::args::{ExperimentArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use crate::telemetry;
 use burn_central_core::BurnCentral;
-use burn_central_core::experiment::ExperimentRun;
+use burn_central_core::experiment::{CancelToken, ExperimentRun};
 use std::collections::HashMap;
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
@@ -21,6 +21,7 @@ pub struct ExecutionContext<B: Backend> {
     args_override: Option<serde_json::Value>,
     devices: Vec<B::Device>,
     experiment: Option<ExperimentRun>,
+    cancel_token: CancelToken,
 }
 
 impl<B: Backend> ExecutionContext<B> {
@@ -41,6 +42,10 @@ impl<B: Backend> ExecutionContext<B> {
 
     pub fn experiment(&self) -> Option<&ExperimentRun> {
         self.experiment.as_ref()
+    }
+
+    pub fn cancel_token(&self) -> &CancelToken {
+        &self.cancel_token
     }
 
     pub fn devices(&self) -> &[B::Device] {
@@ -208,6 +213,7 @@ impl<B: AutodiffBackend> Executor<B> {
             args_override,
             devices: devices.into_iter().collect(),
             experiment: None,
+            cancel_token: CancelToken::new(),
         };
 
         if let Some(client) = &mut ctx.client {
@@ -228,6 +234,20 @@ impl<B: AutodiffBackend> Executor<B> {
                 code_version,
                 routine.to_string(),
             )?;
+
+            let exp_id = experiment.id();
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "namespace": ctx.namespace(),
+                    "project": ctx.project(),
+                    "experiment_num": exp_id.experiment_num(),
+                }))
+                .unwrap()
+            );
+            ctx.cancel_token = experiment
+                .cancel_token()
+                .expect("Experiment reference should be valid");
             ctx.experiment = Some(experiment);
             if let Some(experiment) = ctx.experiment.as_ref() {
                 if let Err(err) = telemetry::install_for_experiment(experiment) {
@@ -325,10 +345,12 @@ mod test {
     fn train_with_params<B: AutodiffBackend>(
         args: Args<TestArgs>,
         devices: MultiDevice<B>,
+        cancel: CancelToken,
     ) -> Model<TestModel<B>> {
         let model = TestModel::new(&devices[0]);
         assert_eq!(args.lr, 0.01);
         assert_eq!(args.epochs, 10);
+        println!("Cancel token available: {}", cancel.is_cancelled());
         println!("Train step with config and model executed.");
         model.into()
     }

@@ -5,7 +5,7 @@ use crate::experiment::{ExperimentRun, ExperimentTrackerError};
 use crate::models::ModelRegistry;
 use crate::schemas::ExperimentPath;
 use burn_central_client::{BurnCentralCredentials, Client, ClientError};
-use reqwest::Url;
+use url::Url;
 
 /// Errors that can occur during the initialization of the [BurnCentral] client.
 #[derive(Debug, thiserror::Error)]
@@ -160,7 +160,6 @@ impl BurnCentral {
                 context: format!("Failed to create experiment for {namespace}/{project_name}"),
                 source: e,
             })?;
-        println!("Experiment num: {}", experiment.experiment_num);
 
         ExperimentRun::new(
             self.client.clone(),

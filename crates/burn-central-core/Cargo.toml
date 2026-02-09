@@ -13,8 +13,7 @@ rust-version.workspace = true
 
 [dependencies]
 burn.workspace = true
-log.workspace = true
-reqwest.workspace = true
+url.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -23,12 +22,5 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-core.workspace = true
 tracing-subscriber.workspace = true
-uuid.workspace = true
-regex.workspace = true
-once_cell.workspace = true
 crossbeam.workspace = true
 burn-central-client.workspace = true
-
-[dev-dependencies]
-burn = { workspace = true }
-anyhow = { workspace = true }

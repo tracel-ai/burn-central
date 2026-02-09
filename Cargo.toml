@@ -8,7 +8,7 @@ members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.4.0"
+version = "0.5.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -20,61 +20,49 @@ categories = ["development-tools"]
 [workspace.dependencies]
 burn = { version = "0.20.0", default-features = false,  features = ["train"] }
 
-anyhow = "1.0.98"
-toml = "0.8.22"
-clap = { version = "4.5.39", features = ["derive"] }
-colored = "3.0.0"
+url = "2.5.8"
+anyhow = "1.0.101"
+clap = { version = "4.5", features = ["derive"] }
 derive-new = { version = "0.7.0", default-features = false }
 log = {version = "0.4.27",features = ["std"] }
-once_cell = "1.21.3"
-proc-macro2 = "1.0.95"
-quote = "1.0.40"
-reqwest = "0.12.19"
-regex = "1.11.1"
-rstest = "0.25.0"
-serde = { version = "1.0.224", default-features = false, features = [
+proc-macro2 = "1.0.106"
+quote = "1.0.44"
+serde = { version = "1.0.228", default-features = false, features = [
     "derive",
     "alloc",
 ] } # alloc is for no_std, derive is needed
-serde_json = "1.0.140"
+serde_json = "1.0.149"
 syn-serde = { version = "0.3.1", features = ["json"] }
 sha2 = "0.10.9"
-strum = { version = "0.27.1", features = ["derive"] }
-syn = { version = "2.0.101", features = ["extra-traits", "full"] }
-thiserror = "2.0.12"
-uuid = { version = "1.17.0", features = [
-    "v4",
-    "fast-rng",
-    "macro-diagnostics",
-    "serde",
-] }
+strum = { version = "0.27.2", features = ["derive"] }
+syn = { version = "2.0.114", features = ["extra-traits", "full"] }
+thiserror = "2.0.18"
 crossbeam = { version = "0.8.4", default-features = false, features = [
     "crossbeam-channel",
     "std",
 ] }
-json-patch = { version = "4.0.0", default-features = false }
+json-patch = { version = "4.1.0", default-features = false }
 variadics_please = "1.1.0"
 tynm = { version = "0.2.0", features = ["info"] }
-derive_more = { version = "2.0.1", default-features = false, features = [
+derive_more = { version = "2.1.1", default-features = false, features = [
     "deref",
     "from",
     "display",
     "unwrap",
 ]}
-env_logger = "0.11.8"
-chrono = "0.4.41"
-tracing = "0.1.41"
-tracing-core = "0.1.33"
-tracing-subscriber = "0.3.20"
+chrono = "0.4.43"
+tracing = "0.1.44"
+tracing-core = "0.1.36"
+tracing-subscriber = "0.3.22"
 
 ## External Crate
-# burn-central-client = { version = "0.3.0", path = "../client/burn-central-client" }
-burn-central-client = "0.3.3"
+# burn-central-client = { version = "0.4.0", path = "../client/burn-central-client" }
+burn-central-client = "0.4.0"
 
 ## Crate
-burn-central-core = { path = "crates/burn-central-core", version = "0.4.0" }
-burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.4.0" }
-burn-central-macros = { path = "crates/burn-central-macros", version = "0.4.0" }
+burn-central-core = { path = "crates/burn-central-core", version = "0.5.0" }
+burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.5.0" }
+burn-central-macros = { path = "crates/burn-central-macros", version = "0.5.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.5.0"
