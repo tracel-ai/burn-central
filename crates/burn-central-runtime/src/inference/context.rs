@@ -1,12 +1,37 @@
 use super::streaming::{CancelToken, Emitter, OutStream};
 use crate::MultiDevice;
 use crate::inference::model::ModelAccessor;
-use crate::inference::{Out, State};
+use crate::inference::{Extension, Out, State};
 use crate::output::RoutineOutput;
 use crate::params::RoutineParam;
 use burn::prelude::Backend;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};
+
+/// Type-indexed shared extension map used to inject runtime-wide values into handlers.
+#[derive(Default)]
+pub struct InferenceExtensions {
+    values: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+
+impl InferenceExtensions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert<T: Send + Sync + 'static>(&mut self, value: Arc<T>) {
+        self.values.insert(TypeId::of::<T>(), value);
+    }
+
+    pub fn get<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.values.get(&TypeId::of::<T>()).and_then(|value| {
+            let value = value.clone();
+            Arc::downcast::<T>(value).ok()
+        })
+    }
+}
 
 /// Runtime context passed to the user handler providing access to the model, devices,
 /// streaming emitter, cancellation token and (optional) user state.
@@ -17,6 +42,7 @@ pub struct InferenceContext<B: Backend, M, O, S> {
     pub emitter: Arc<dyn Emitter<O>>,
     pub cancel_token: CancelToken,
     pub state: Mutex<Option<S>>,
+    pub extensions: Arc<InferenceExtensions>,
 }
 
 // --- Params
@@ -91,6 +117,26 @@ impl<B: Backend, M, O, S> RoutineParam<InferenceContext<B, M, O, S>> for State<S
         Ok(State(ctx.state.lock().unwrap().take().ok_or_else(
             || anyhow::anyhow!("State has already been taken or was not provided"),
         )?))
+    }
+}
+
+impl<B: Backend, M, O, S, T> RoutineParam<InferenceContext<B, M, O, S>> for Extension<T>
+where
+    T: Send + Sync + 'static,
+{
+    type Item<'new>
+        = Extension<T>
+    where
+        B: 'new,
+        M: 'new,
+        O: 'new,
+        S: 'new;
+
+    fn try_retrieve(ctx: &InferenceContext<B, M, O, S>) -> anyhow::Result<Self::Item<'_>> {
+        ctx.extensions
+            .get::<T>()
+            .map(Extension)
+            .ok_or_else(|| anyhow::anyhow!("Extension not found: {}", std::any::type_name::<T>()))
     }
 }
 

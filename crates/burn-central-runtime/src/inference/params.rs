@@ -1,4 +1,5 @@
 use derive_more::{Deref, From};
+use std::sync::Arc;
 
 #[allow(dead_code)]
 #[derive(Debug, Deref, From)]
@@ -8,6 +9,9 @@ pub struct Out<T>(pub T);
 #[allow(dead_code)]
 #[derive(Debug, Deref, From)]
 pub struct State<T>(pub T);
+#[allow(dead_code)]
+#[derive(Clone, Deref, From)]
+pub struct Extension<T>(pub Arc<T>);
 
 use crate::{executor::ExecutionContext, params::RoutineParam};
 use anyhow::Result;

@@ -1,4 +1,5 @@
 use super::context::InferenceContext;
+use super::context::InferenceExtensions;
 use super::context::InferenceOutput;
 use super::error::InferenceError;
 use super::init::Init;
@@ -27,6 +28,7 @@ pub struct Inference<B: Backend, M, I, O, S = ()> {
     pub id: String,
     model: ModelHost<M>,
     handler: ArcInferenceHandler<B, M, I, O, S>,
+    extensions: Arc<InferenceExtensions>,
 }
 
 impl<B, M, I, O, S> Inference<B, M, I, O, S>
@@ -37,11 +39,17 @@ where
     O: Send + 'static,
     S: Send + Sync + 'static,
 {
-    pub(crate) fn new(id: String, handler: ArcInferenceHandler<B, M, I, O, S>, model: M) -> Self {
+    pub(crate) fn new(
+        id: String,
+        handler: ArcInferenceHandler<B, M, I, O, S>,
+        model: M,
+        extensions: InferenceExtensions,
+    ) -> Self {
         Self {
             id,
             model: ModelHost::spawn(model),
             handler,
+            extensions: Arc::new(extensions),
         }
     }
 
@@ -70,6 +78,7 @@ where
                 emitter: collector.clone(),
                 cancel_token: CancelToken::new(),
                 state: Mutex::new(Some(state)),
+                extensions: self.extensions.clone(),
             };
             self.handler
                 .run(input, &mut ctx)
@@ -99,6 +108,7 @@ where
             emitter: Arc::new(SyncChannelEmitter::new(stream_tx)),
             cancel_token: cancel_token.clone(),
             state: Mutex::new(Some(state)),
+            extensions: self.extensions.clone(),
         };
         let handler = self.handler.clone();
         let join = std::thread::spawn(move || {
@@ -118,6 +128,7 @@ where
 /// Entry point builder for an [`Inference`] instance.
 pub struct InferenceBuilder<B> {
     phantom_data: PhantomData<B>,
+    extensions: InferenceExtensions,
 }
 
 impl<B: Backend> Default for InferenceBuilder<B> {
@@ -131,7 +142,14 @@ impl<B: Backend> InferenceBuilder<B> {
     pub fn new() -> Self {
         Self {
             phantom_data: Default::default(),
+            extensions: InferenceExtensions::new(),
         }
+    }
+
+    /// Attach a shared extension available to handlers via `Extension<T>`.
+    pub fn with_extension<T: Send + Sync + 'static>(mut self, extension: Arc<T>) -> Self {
+        self.extensions.insert(extension);
+        self
     }
 
     /// Initialize a model implementing [`Init`] from user artifacts / arguments + target device.
@@ -148,6 +166,7 @@ impl<B: Backend> InferenceBuilder<B> {
         Ok(LoadedInferenceBuilder {
             model,
             phantom_data: Default::default(),
+            extensions: self.extensions,
         })
     }
 
@@ -156,6 +175,7 @@ impl<B: Backend> InferenceBuilder<B> {
         LoadedInferenceBuilder {
             model,
             phantom_data: Default::default(),
+            extensions: self.extensions,
         }
     }
 }
@@ -164,6 +184,7 @@ impl<B: Backend> InferenceBuilder<B> {
 pub struct LoadedInferenceBuilder<B: Backend, M> {
     model: M,
     phantom_data: PhantomData<B>,
+    extensions: InferenceExtensions,
 }
 
 impl<B, M> LoadedInferenceBuilder<B, M>
@@ -171,6 +192,12 @@ where
     B: Backend,
     M: Send + 'static,
 {
+    /// Attach a shared extension available to handlers via `Extension<T>`.
+    pub fn with_extension<T: Send + Sync + 'static>(mut self, extension: Arc<T>) -> Self {
+        self.extensions.insert(extension);
+        self
+    }
+
     /// Finalize the construction of an [`Inference`] by supplying a handler routine implementation.
     pub fn build<F, I, O, RO, Marker, S>(self, handler: F) -> Inference<B, M, I, O, S>
     where
@@ -186,6 +213,7 @@ where
                 handler,
             ))),
             self.model,
+            self.extensions,
         )
     }
 }

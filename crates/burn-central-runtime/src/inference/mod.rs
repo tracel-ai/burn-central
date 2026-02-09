@@ -32,5 +32,6 @@ pub use init::Init;
 pub use input::*;
 pub use job::JobHandle;
 pub use model::ModelAccessor;
-pub use params::{In, Out, State};
+pub use params::{Extension, In, Out, State};
+pub use context::InferenceExtensions;
 pub use streaming::{CancelToken, EmitError, Emitter, OutStream};

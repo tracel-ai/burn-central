@@ -1,0 +1,31 @@
+[package]
+name = "inference-actor-demo"
+authors.workspace = true
+categories.workspace = true
+description = "Minimal actor-style inference runtime demo."
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crossbeam.workspace = true
+
+[dev-dependencies]
+axum = { version = "0.7.5" }
+tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+serde = { version = "1.0.192", features = ["derive"] }
+serde_json = { version = "1.0.117" }
+async-stream = "0.3.5"
+futures-util = "0.3.30"
+clap = { version = "4.5.4", features = ["derive"] }
+reqwest = { version = "0.12.7", default-features = false, features = ["json", "stream", "rustls-tls"] }
+anyhow.workspace = true
+burn = { workspace = true, default-features = false, features = ["ndarray"] }
+
+[[example]]
+name = "axum_server"
+path = "examples/axum_server/main.rs"

@@ -13,7 +13,10 @@ use axum::{
     Json, Router,
 };
 use burn::tensor::f16;
-use llama_burn::inference::{continuous_batched_streaming_handler, GenerateRequest, TokenOutput};
+use llama_burn::inference::{
+    continuous_batched_streaming_handler, ContinuousBatchConfig, ContinuousBatchScheduler,
+    GenerateRequest, TokenOutput,
+};
 use llama_burn::llama::build_chat_prompt;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -111,8 +114,12 @@ async fn run_with_model<T: Tokenizer + Send + Sync + 'static>(
     llama: llama_burn::llama::Llama<Back, T>,
     device: <Back as Backend>::Device,
 ) {
+    let scheduler = Arc::new(ContinuousBatchScheduler::<Back, T>::new(
+        ContinuousBatchConfig::default(),
+    ));
     let inference = burn_central::runtime::inference::InferenceBuilder::<Back>::new()
         .with_model(llama)
+        .with_extension(scheduler)
         .build(continuous_batched_streaming_handler);
 
     let state = Arc::new(AppState::<T> {

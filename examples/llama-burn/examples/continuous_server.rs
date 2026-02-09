@@ -11,7 +11,10 @@ use burn::backend::{cuda::CudaDevice, Cuda};
 #[cfg(feature = "cuda")]
 use burn::prelude::Backend;
 use burn::tensor::f16;
-use llama_burn::inference::{continuous_batched_streaming_handler, GenerateRequest};
+use llama_burn::inference::{
+    continuous_batched_streaming_handler, ContinuousBatchConfig, ContinuousBatchScheduler,
+    GenerateRequest,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -143,8 +146,12 @@ fn run_continuous_demo<B: Backend, T: llama_burn::tokenizer::Tokenizer + Send + 
     llama: llama_burn::llama::Llama<B, T>,
     device: B::Device,
 ) {
+    let scheduler = Arc::new(ContinuousBatchScheduler::<B, T>::new(
+        ContinuousBatchConfig::default(),
+    ));
     let inference = burn_central::runtime::inference::InferenceBuilder::<B>::new()
         .with_model(llama)
+        .with_extension(scheduler)
         .build(continuous_batched_streaming_handler);
 
     println!("Continuous batching server ready!\n");

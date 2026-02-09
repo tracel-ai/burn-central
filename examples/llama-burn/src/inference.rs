@@ -13,10 +13,9 @@
 
 use burn::tensor::backend::Backend;
 use burn::tensor::{ElementConversion, Int, Shape, Tensor, TensorData};
-use burn_central_runtime::inference::{CancelToken, In, ModelAccessor, OutStream};
+use burn_central_runtime::inference::{CancelToken, Extension, In, ModelAccessor, OutStream};
 use crossbeam_channel as channel;
 use serde::{Deserialize, Serialize};
-use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -148,6 +147,45 @@ impl<B: Backend, T: Tokenizer + Send + Sync + 'static> ContinuousBatcher<B, T> {
     }
 }
 
+/// Per-inference scheduler wrapper for continuous batching.
+///
+/// This object is intended to be attached to an `Inference` via
+/// `InferenceBuilder::with_extension` and then extracted in the handler using
+/// `Extension<ContinuousBatchScheduler<...>>`.
+pub struct ContinuousBatchScheduler<B: Backend + 'static, T: Tokenizer + Send + Sync + 'static> {
+    config: ContinuousBatchConfig,
+    batcher: OnceLock<Arc<ContinuousBatcher<B, T>>>,
+}
+
+impl<B: Backend + 'static, T: Tokenizer + Send + Sync + 'static> ContinuousBatchScheduler<B, T> {
+    pub fn new(config: ContinuousBatchConfig) -> Self {
+        Self {
+            config,
+            batcher: OnceLock::new(),
+        }
+    }
+
+    fn get_or_init_batcher(
+        &self,
+        model: ModelAccessor<Llama<B, T>>,
+    ) -> Arc<ContinuousBatcher<B, T>> {
+        self.batcher
+            .get_or_init(|| ContinuousBatcher::new(model, self.config.clone()))
+            .clone()
+    }
+
+    fn submit(
+        &self,
+        model: ModelAccessor<Llama<B, T>>,
+        request: GenerateRequest,
+        reply: channel::Sender<BatcherEvent>,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let batcher = self.get_or_init_batcher(model);
+        batcher.submit(request, reply, cancel_flag)
+    }
+}
+
 enum BatcherCommand {
     Submit {
         request: GenerateRequest,
@@ -179,24 +217,6 @@ struct ActiveRequest {
     pending_input: u32,
     reply: channel::Sender<BatcherEvent>,
     cancel_flag: Arc<AtomicBool>,
-}
-
-static CONTINUOUS_BATCHER: OnceLock<Box<dyn Any + Send + Sync>> = OnceLock::new();
-
-fn get_or_init_batcher<B: Backend + 'static, T: Tokenizer + Send + Sync + 'static>(
-    model: ModelAccessor<Llama<B, T>>,
-) -> Result<Arc<ContinuousBatcher<B, T>>, String> {
-    let stored = CONTINUOUS_BATCHER.get_or_init(|| {
-        let batcher = ContinuousBatcher::new(model, ContinuousBatchConfig::default());
-        Box::new(batcher) as Box<dyn Any + Send + Sync>
-    });
-
-    stored
-        .downcast_ref::<Arc<ContinuousBatcher<B, T>>>()
-        .cloned()
-        .ok_or_else(|| {
-            "Continuous batcher already initialized with a different model type".to_string()
-        })
 }
 
 fn run_continuous_batcher<B: Backend + 'static, T: Tokenizer + Send + Sync + 'static>(
@@ -285,7 +305,7 @@ fn run_continuous_batcher<B: Backend + 'static, T: Tokenizer + Send + Sync + 'st
         }
 
         // Prefill pending requests while slots are available.
-        let mut idx = 0;
+        let idx = 0;
         while idx < pending.len() && !free_slots.is_empty() {
             let slot = free_slots.pop().unwrap();
             let pending_req = pending.swap_remove(idx);
@@ -682,22 +702,22 @@ pub fn concurrent_streaming_handler<B: Backend, T: Tokenizer + 'static>(
 /// dynamic batches. It supports mid-stream joins, cancellation, and token
 /// streaming while keeping the GPU busy.
 ///
-/// **Note:** A single global batcher is created per process. Mixing multiple
-/// model types in the same process is not supported by this handler.
+/// Requires a `ContinuousBatchScheduler<B, T>` extension to be attached to the
+/// `InferenceBuilder`.
 pub fn continuous_batched_streaming_handler<
     B: Backend + 'static,
     T: Tokenizer + Send + Sync + 'static,
 >(
     In(request): In<GenerateRequest>,
     model: ModelAccessor<Llama<B, T>>,
+    Extension(scheduler): Extension<ContinuousBatchScheduler<B, T>>,
     cancel: CancelToken,
     output: OutStream<TokenOutput>,
 ) -> Result<(), String> {
-    let batcher = get_or_init_batcher(model)?;
     let (reply_tx, reply_rx) = channel::unbounded();
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    batcher.submit(request, reply_tx, cancel_flag.clone())?;
+    scheduler.submit(model, request, reply_tx, cancel_flag.clone())?;
 
     loop {
         if cancel.is_cancelled() {

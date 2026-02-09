@@ -3,13 +3,14 @@ use crate::inference::core::InferenceBuilder;
 use crate::inference::init::Init;
 use crate::inference::params::{In, Out, State};
 use crate::inference::streaming::OutStream;
-use crate::inference::{CancelToken, ModelAccessor};
+use crate::inference::{CancelToken, Extension, ModelAccessor};
 use burn::backend::NdArray;
 use burn::config::Config;
 use burn::nn::{Linear, LinearConfig};
 use burn::prelude::{Backend, Module};
 use burn::record::{FullPrecisionSettings, NamedMpkBytesRecorder, Recorder};
 use burn::tensor::Tensor;
+use std::sync::Arc;
 
 type TestBackend = NdArray;
 type Device = <TestBackend as Backend>::Device;
@@ -104,6 +105,19 @@ fn stateful_inference_handler<B: Backend>(
         }
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct SharedPrefix {
+    value: String,
+}
+
+fn extension_inference_handler<B: Backend>(
+    _input: In<Tensor<B, 2>>,
+    _model: ModelAccessor<TestModel<B>>,
+    Extension(prefix): Extension<SharedPrefix>,
+) -> Out<String> {
+    prefix.value.clone().into()
 }
 
 fn create_test_model_artifacts() -> TestModelArtifacts {
@@ -332,4 +346,24 @@ fn test_multiple_streaming_jobs_in_parallel() {
     let cb = h_b.join().unwrap();
     assert_eq!(ca, 3);
     assert_eq!(cb, 3);
+}
+
+#[test]
+fn test_extension_inference_param() {
+    let artifacts = create_test_model_artifacts();
+    let device = Device::default();
+
+    let inference = InferenceBuilder::<TestBackend>::new()
+        .init(&artifacts, &device)
+        .unwrap()
+        .with_extension(Arc::new(SharedPrefix {
+            value: "shared".to_string(),
+        }))
+        .build(extension_inference_handler);
+
+    let input = Tensor::<TestBackend, 2>::ones([1, 10], &device);
+    let output = inference.infer(input).with_devices([device]).run().unwrap();
+
+    assert_eq!(output.len(), 1);
+    assert_eq!(output[0], "shared");
 }
