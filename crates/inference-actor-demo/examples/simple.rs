@@ -1,4 +1,6 @@
-use inference_actor_demo::runtime::{Effect, InferenceApp, RequestId, spawn_session};
+use inference_actor_demo::runtime::{
+    Effect, InferenceApp, ModelExecutor, RequestId, spawn_session,
+};
 use std::collections::HashMap;
 use std::thread;
 
@@ -12,6 +14,7 @@ struct TickOut {
 struct CounterApp {
     remaining: HashMap<RequestId, usize>,
     active: Vec<RequestId>,
+    step_in_flight: bool,
 }
 
 impl CounterApp {
@@ -19,25 +22,90 @@ impl CounterApp {
         Self {
             remaining: HashMap::new(),
             active: Vec::new(),
+            step_in_flight: false,
         }
+    }
+
+    fn schedule_step(&mut self) -> Vec<Effect<TickOut, ModelStepOp, String>> {
+        if self.step_in_flight || self.active.is_empty() {
+            return Vec::new();
+        }
+
+        let mut batch = Vec::with_capacity(self.active.len());
+        for id in &self.active {
+            if let Some(remaining) = self.remaining.get(id) {
+                batch.push(StepInput {
+                    id: *id,
+                    remaining: *remaining,
+                });
+            }
+        }
+
+        if batch.is_empty() {
+            return Vec::new();
+        }
+
+        self.step_in_flight = true;
+        vec![Effect::RunModel(ModelStepOp { batch })]
     }
 }
 
 #[derive(Debug)]
-enum ModelOp {
-    Step,
+struct StepInput {
+    id: RequestId,
+    remaining: usize,
 }
 
 #[derive(Debug)]
-enum ModelEvent {
-    Batch(Vec<(RequestId, TickOut, bool)>),
+struct ModelStepOp {
+    batch: Vec<StepInput>,
+}
+
+#[derive(Debug)]
+struct StepResult {
+    id: RequestId,
+    remaining: usize,
+    out: TickOut,
+    done: bool,
+}
+
+#[derive(Debug)]
+struct ModelStepResult {
+    items: Vec<StepResult>,
+}
+
+struct CounterExecutor;
+
+impl ModelExecutor<ModelStepOp, ModelStepResult, String> for CounterExecutor {
+    fn execute(&mut self, op: ModelStepOp) -> Result<ModelStepResult, String> {
+        let mut items = Vec::with_capacity(op.batch.len());
+        for input in op.batch {
+            let mut remaining = input.remaining;
+            let index = remaining;
+            if remaining > 0 {
+                remaining -= 1;
+            }
+            let done = remaining == 0;
+            let out = TickOut {
+                id: input.id,
+                index,
+            };
+            items.push(StepResult {
+                id: input.id,
+                remaining,
+                out,
+                done,
+            });
+        }
+        Ok(ModelStepResult { items })
+    }
 }
 
 impl InferenceApp for CounterApp {
     type Input = usize;
     type Output = TickOut;
-    type ModelOp = ModelOp;
-    type ModelEvent = ModelEvent;
+    type ModelOp = ModelStepOp;
+    type ModelEvent = ModelStepResult;
     type Error = String;
 
     fn on_submit(
@@ -47,7 +115,7 @@ impl InferenceApp for CounterApp {
     ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
         self.remaining.insert(id, input);
         self.active.push(id);
-        vec![Effect::RunModel(ModelOp::Step)]
+        self.schedule_step()
     }
 
     fn on_cancel(
@@ -63,21 +131,36 @@ impl InferenceApp for CounterApp {
         &mut self,
         event: Self::ModelEvent,
     ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        match event {
-            ModelEvent::Batch(items) => {
-                let mut effects = Vec::new();
-                for (id, out, done) in items {
-                    effects.push(Effect::Emit { id, item: out });
-                    if done {
-                        effects.push(Effect::Finish { id, result: Ok(()) });
-                    }
-                }
-                if !self.active.is_empty() {
-                    effects.push(Effect::RunModel(ModelOp::Step));
-                }
-                effects
+        let mut effects = Vec::new();
+        self.step_in_flight = false;
+
+        for item in event.items {
+            if item.done {
+                self.remaining.remove(&item.id);
+            } else {
+                self.remaining.insert(item.id, item.remaining);
+            }
+            effects.push(Effect::Emit {
+                id: item.id,
+                item: item.out,
+            });
+            if item.done {
+                effects.push(Effect::Finish {
+                    id: item.id,
+                    result: Ok(()),
+                });
             }
         }
+
+        self.active.retain(|id| {
+            self.remaining
+                .get(id)
+                .map(|remaining| *remaining > 0)
+                .unwrap_or(false)
+        });
+
+        effects.extend(self.schedule_step());
+        effects
     }
 
     fn on_model_error(
@@ -85,6 +168,7 @@ impl InferenceApp for CounterApp {
         err: Self::Error,
     ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
         let mut effects = Vec::new();
+        self.step_in_flight = false;
         for id in self.active.drain(..) {
             effects.push(Effect::Finish {
                 id,
@@ -93,45 +177,10 @@ impl InferenceApp for CounterApp {
         }
         effects
     }
-
-    fn execute(&mut self, op: Self::ModelOp) -> Result<Self::ModelEvent, Self::Error> {
-        match op {
-            ModelOp::Step => {
-                let mut batch = Vec::new();
-                let mut to_remove = Vec::new();
-
-                for id in &self.active {
-                    let remaining = self
-                        .remaining
-                        .get_mut(id)
-                        .ok_or_else(|| "missing request state".to_string())?;
-
-                    let index = *remaining;
-                    if *remaining > 0 {
-                        *remaining -= 1;
-                    }
-
-                    let done = *remaining == 0;
-                    if done {
-                        to_remove.push(*id);
-                    }
-
-                    batch.push((*id, TickOut { id: *id, index }, done));
-                }
-
-                for id in to_remove {
-                    self.remaining.remove(&id);
-                    self.active.retain(|rid| *rid != id);
-                }
-
-                Ok(ModelEvent::Batch(batch))
-            }
-        }
-    }
 }
 
 fn main() {
-    let session = spawn_session(CounterApp::new());
+    let session = spawn_session(CounterApp::new(), CounterExecutor);
 
     let s1 = session.clone();
     let t1 = thread::spawn(move || {

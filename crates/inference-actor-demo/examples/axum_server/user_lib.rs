@@ -1,11 +1,15 @@
 use burn::nn::{Linear, LinearConfig};
 use burn::prelude::Backend;
 use burn::tensor::{ElementConversion, Shape, Tensor, TensorData, activation};
-use inference_actor_demo::runtime::{Effect, InferenceApp, RequestId};
+use inference_actor_demo::JsonSession;
+use inference_actor_demo::erased::InferenceSpec;
+use inference_actor_demo::runtime::{
+    Effect, InferenceApp, ModelExecutor, RequestId, spawn_session,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GenerateRequest {
     pub steps: usize,
     pub value: f32,
@@ -21,6 +25,12 @@ pub struct StepOut {
 pub const INPUT_DIM: usize = 256;
 pub const HIDDEN_DIM: usize = 512;
 pub const OUTPUT_DIM: usize = 128;
+pub const SPEC: InferenceSpec = InferenceSpec {
+    name: "rnn_demo",
+    input_schema: r#"{\"type\":\"object\",\"fields\":[{\"name\":\"steps\",\"type\":\"u64\"},{\"name\":\"value\",\"type\":\"f32\"}]}"#,
+    output_schema: r#"{\"type\":\"object\",\"fields\":[{\"name\":\"id\",\"type\":\"u64\"},{\"name\":\"index\",\"type\":\"u64\"},{\"name\":\"sample\",\"type\":\"f32\"}]}"#,
+    streaming: true,
+};
 
 #[derive(Debug)]
 struct RnnModel<B: Backend> {
@@ -60,31 +70,63 @@ struct RequestState<B: Backend> {
 
 #[derive(Debug)]
 pub struct RnnApp<B: Backend> {
-    model: RnnModel<B>,
-    device: B::Device,
     requests: HashMap<RequestId, RequestState<B>>,
     active: Vec<RequestId>,
+    step_in_flight: bool,
 }
 
 impl<B: Backend> RnnApp<B> {
-    pub fn new(device: B::Device) -> Self {
+    pub fn new() -> Self {
         Self {
-            model: RnnModel::new(&device),
-            device,
             requests: HashMap::new(),
             active: Vec::new(),
+            step_in_flight: false,
         }
+    }
+
+    fn schedule_step(&mut self) -> Vec<Effect<StepOut, ModelStepOp<B>, String>> {
+        if self.step_in_flight || self.active.is_empty() {
+            return Vec::new();
+        }
+
+        let batch_size = self.active.len();
+        let mut input: Vec<B::FloatElem> = Vec::with_capacity(batch_size * INPUT_DIM);
+        let mut hidden: Vec<B::FloatElem> = Vec::with_capacity(batch_size * HIDDEN_DIM);
+        let mut ids: Vec<RequestId> = Vec::with_capacity(batch_size);
+
+        for id in &self.active {
+            let state = match self.requests.get(id) {
+                Some(state) => state,
+                None => continue,
+            };
+            ids.push(*id);
+            input.extend_from_slice(&state.input);
+            hidden.extend_from_slice(&state.hidden);
+        }
+
+        self.step_in_flight = true;
+        vec![Effect::RunModel(ModelStepOp {
+            ids,
+            input,
+            hidden,
+            batch_size,
+        })]
     }
 }
 
 #[derive(Debug)]
-pub enum ModelOp {
-    Step,
+pub struct ModelStepOp<B: Backend> {
+    pub ids: Vec<RequestId>,
+    pub input: Vec<B::FloatElem>,
+    pub hidden: Vec<B::FloatElem>,
+    pub batch_size: usize,
 }
 
 #[derive(Debug)]
-pub enum ModelEvent {
-    Batch(Vec<(RequestId, StepOut, bool)>),
+pub struct ModelStepResult<B: Backend> {
+    pub ids: Vec<RequestId>,
+    pub output: Vec<B::FloatElem>,
+    pub hidden: Vec<B::FloatElem>,
 }
 
 impl<B> InferenceApp for RnnApp<B>
@@ -93,8 +135,8 @@ where
 {
     type Input = GenerateRequest;
     type Output = StepOut;
-    type ModelOp = ModelOp;
-    type ModelEvent = ModelEvent;
+    type ModelOp = ModelStepOp<B>;
+    type ModelEvent = ModelStepResult<B>;
     type Error = String;
 
     fn on_submit(
@@ -115,7 +157,7 @@ where
             },
         );
         self.active.push(id);
-        vec![Effect::RunModel(ModelOp::Step)]
+        self.schedule_step()
     }
 
     fn on_cancel(
@@ -131,21 +173,60 @@ where
         &mut self,
         event: Self::ModelEvent,
     ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        match event {
-            ModelEvent::Batch(items) => {
-                let mut effects = Vec::new();
-                for (id, out, done) in items {
-                    effects.push(Effect::Emit { id, item: out });
-                    if done {
-                        effects.push(Effect::Finish { id, result: Ok(()) });
-                    }
-                }
-                if !self.active.is_empty() {
-                    effects.push(Effect::RunModel(ModelOp::Step));
-                }
-                effects
+        let mut effects = Vec::new();
+        self.step_in_flight = false;
+
+        let ModelStepResult {
+            ids,
+            output,
+            hidden,
+        } = event;
+        for (pos, id) in ids.iter().enumerate() {
+            let state = match self.requests.get_mut(id) {
+                Some(state) => state,
+                None => continue,
+            };
+
+            if state.remaining > 0 {
+                state.remaining -= 1;
+            }
+            state.generated += 1;
+
+            let done = state.remaining == 0;
+            let sample = output[pos * OUTPUT_DIM].elem::<f32>();
+            let index = state.generated - 1;
+
+            let hidden_start = pos * HIDDEN_DIM;
+            let hidden_end = hidden_start + HIDDEN_DIM;
+            state
+                .hidden
+                .copy_from_slice(&hidden[hidden_start..hidden_end]);
+
+            effects.push(Effect::Emit {
+                id: *id,
+                item: StepOut {
+                    id: *id,
+                    index,
+                    sample,
+                },
+            });
+            if done {
+                effects.push(Effect::Finish {
+                    id: *id,
+                    result: Ok(()),
+                });
             }
         }
+
+        self.active.retain(|id| {
+            self.requests
+                .get(id)
+                .map(|state| state.remaining > 0)
+                .unwrap_or(false)
+        });
+
+        effects.extend(self.schedule_step());
+        effects
     }
 
     fn on_model_error(
@@ -153,6 +234,7 @@ where
         error: Self::Error,
     ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
         let mut effects = Vec::new();
+        self.step_in_flight = false;
         for id in self.active.drain(..) {
             effects.push(Effect::Finish {
                 id,
@@ -161,90 +243,71 @@ where
         }
         effects
     }
+}
 
-    fn execute(&mut self, op: Self::ModelOp) -> Result<Self::ModelEvent, Self::Error> {
-        match op {
-            ModelOp::Step => {
-                if self.active.is_empty() {
-                    return Ok(ModelEvent::Batch(Vec::new()));
-                }
-                let mut batch = Vec::new();
-                let mut to_remove = Vec::new();
+pub struct RnnExecutor<B: Backend> {
+    model: RnnModel<B>,
+    device: B::Device,
+}
 
-                let batch_size = self.active.len();
-                let mut input_data: Vec<B::FloatElem> = Vec::with_capacity(batch_size * INPUT_DIM);
-                let mut hidden_data: Vec<B::FloatElem> =
-                    Vec::with_capacity(batch_size * HIDDEN_DIM);
-
-                for id in &self.active {
-                    let state = self
-                        .requests
-                        .get(id)
-                        .ok_or_else(|| "missing request state".to_string())?;
-                    input_data.extend_from_slice(&state.input);
-                    hidden_data.extend_from_slice(&state.hidden);
-                }
-
-                let input = Tensor::<B, 2>::from_data(
-                    TensorData::new(input_data, Shape::new([batch_size, INPUT_DIM])),
-                    &self.device,
-                );
-                let hidden = Tensor::<B, 2>::from_data(
-                    TensorData::new(hidden_data, Shape::new([batch_size, HIDDEN_DIM])),
-                    &self.device,
-                );
-                let (next_hidden, output) = self.model.step(input, hidden);
-                let output_data = output.into_data();
-                let output_slice = output_data
-                    .as_slice::<B::FloatElem>()
-                    .map_err(|_| "output slice missing".to_string())?;
-                let hidden_data = next_hidden.into_data();
-                let hidden_slice = hidden_data
-                    .as_slice::<B::FloatElem>()
-                    .map_err(|_| "hidden slice missing".to_string())?;
-
-                for (pos, id) in self.active.iter().enumerate() {
-                    let state = self
-                        .requests
-                        .get_mut(id)
-                        .ok_or_else(|| "missing request state".to_string())?;
-
-                    if state.remaining > 0 {
-                        state.remaining -= 1;
-                    }
-                    state.generated += 1;
-
-                    let done = state.remaining == 0;
-                    if done {
-                        to_remove.push(*id);
-                    }
-
-                    let sample = output_slice[pos * OUTPUT_DIM].elem::<f32>();
-                    let index = state.generated - 1;
-                    let hidden_start = pos * HIDDEN_DIM;
-                    let hidden_end = hidden_start + HIDDEN_DIM;
-                    state
-                        .hidden
-                        .copy_from_slice(&hidden_slice[hidden_start..hidden_end]);
-
-                    batch.push((
-                        *id,
-                        StepOut {
-                            id: *id,
-                            index,
-                            sample,
-                        },
-                        done,
-                    ));
-                }
-
-                for id in to_remove {
-                    self.requests.remove(&id);
-                    self.active.retain(|rid| *rid != id);
-                }
-
-                Ok(ModelEvent::Batch(batch))
-            }
+impl<B: Backend> RnnExecutor<B> {
+    pub fn new(device: B::Device) -> Self {
+        Self {
+            model: RnnModel::new(&device),
+            device,
         }
     }
+}
+
+impl<B> ModelExecutor<ModelStepOp<B>, ModelStepResult<B>, String> for RnnExecutor<B>
+where
+    B: Backend,
+{
+    fn execute(&mut self, op: ModelStepOp<B>) -> Result<ModelStepResult<B>, String> {
+        let ModelStepOp {
+            ids,
+            input,
+            hidden,
+            batch_size,
+        } = op;
+
+        if batch_size == 0 {
+            return Ok(ModelStepResult {
+                ids,
+                output: Vec::new(),
+                hidden: Vec::new(),
+            });
+        }
+
+        let input = Tensor::<B, 2>::from_data(
+            TensorData::new(input, Shape::new([batch_size, INPUT_DIM])),
+            &self.device,
+        );
+        let hidden = Tensor::<B, 2>::from_data(
+            TensorData::new(hidden, Shape::new([batch_size, HIDDEN_DIM])),
+            &self.device,
+        );
+        let (next_hidden, output) = self.model.step(input, hidden);
+        let output_data = output.into_data();
+        let output_slice = output_data
+            .as_slice::<B::FloatElem>()
+            .map_err(|_| "output slice missing".to_string())?;
+        let hidden_data = next_hidden.into_data();
+        let hidden_slice = hidden_data
+            .as_slice::<B::FloatElem>()
+            .map_err(|_| "hidden slice missing".to_string())?;
+
+        Ok(ModelStepResult {
+            ids,
+            output: output_slice.to_vec(),
+            hidden: hidden_slice.to_vec(),
+        })
+    }
+}
+
+pub fn build_session<B: Backend>(
+    device: B::Device,
+) -> JsonSession<GenerateRequest, StepOut, String> {
+    let session = spawn_session(RnnApp::<B>::new(), RnnExecutor::<B>::new(device));
+    JsonSession::new(session, &SPEC)
 }

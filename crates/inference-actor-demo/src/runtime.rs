@@ -20,6 +20,10 @@ pub enum Effect<O, Op, E> {
     RunModel(Op),
 }
 
+pub trait ModelExecutor<Op, Event, Error>: Send + 'static {
+    fn execute(&mut self, op: Op) -> Result<Event, Error>;
+}
+
 pub trait InferenceApp: Send + 'static {
     type Input: Send + 'static;
     type Output: Send + 'static;
@@ -48,8 +52,6 @@ pub trait InferenceApp: Send + 'static {
         let _ = error;
         Vec::new()
     }
-
-    fn execute(&mut self, op: Self::ModelOp) -> Result<Self::ModelEvent, Self::Error>;
 }
 
 enum Command<I, M, E> {
@@ -77,8 +79,7 @@ impl<I, O, E> Job<I, O, E> {
         let _ = self.cancel.send(Command::Cancel { id: self.id });
     }
 
-    /// Blocking receive for sync contexts.
-    pub fn recv_blocking(&mut self) -> Option<O> {
+    pub fn recv(&mut self) -> Option<O> {
         self.stream.recv().ok()
     }
 
@@ -119,53 +120,77 @@ impl<I: Send + 'static, O: Send + 'static, E: Send + 'static> SessionHandle<I, O
     }
 }
 
-/// Spawn a single-writer session actor.
+/// Spawn a single-writer session actor with a dedicated model executor worker.
 /// All request state lives in `app` and is mutated only on this thread,
 /// while callers can submit/cancel concurrently via the returned handle.
-pub fn spawn_session<A>(mut app: A) -> SessionHandle<A::Input, A::Output, A::Error>
+pub fn spawn_session<A, X>(
+    mut app: A,
+    mut executor: X,
+) -> SessionHandle<A::Input, A::Output, A::Error>
 where
     A: InferenceApp,
+    X: ModelExecutor<A::ModelOp, A::ModelEvent, A::Error>,
 {
     let (tx, rx) = channel::unbounded::<Command<A::Input, A::Output, A::Error>>();
+    let (op_tx, op_rx) = channel::unbounded::<A::ModelOp>();
+    let (ev_tx, ev_rx) = channel::unbounded::<Result<A::ModelEvent, A::Error>>();
+
     let handle = SessionHandle {
         tx: tx.clone(),
         next_id: Arc::new(AtomicU64::new(1)),
     };
 
     std::thread::spawn(move || {
+        while let Ok(op) = op_rx.recv() {
+            let res = executor.execute(op);
+            let _ = ev_tx.send(res);
+        }
+    });
+
+    std::thread::spawn(move || {
         let mut outputs: HashMap<RequestId, Sender<A::Output>> = HashMap::new();
         let mut dones: HashMap<RequestId, Sender<Result<(), A::Error>>> = HashMap::new();
 
-        while let Ok(cmd) = rx.recv() {
-            let effects = match cmd {
-                Command::Submit {
-                    id,
-                    input,
-                    out,
-                    done,
-                } => {
-                    outputs.insert(id, out);
-                    dones.insert(id, done);
-                    app.on_submit(id, input)
+        loop {
+            crossbeam::select! {
+                recv(rx) -> msg => match msg {
+                    Ok(Command::Submit { id, input, out, done }) => {
+                        outputs.insert(id, out);
+                        dones.insert(id, done);
+                        let effects = app.on_submit(id, input);
+                        process_effects_with_sender(effects, &op_tx, &mut outputs, &mut dones);
+                    }
+                    Ok(Command::Cancel { id }) => {
+                        let effects = app.on_cancel(id);
+                        process_effects_with_sender(effects, &op_tx, &mut outputs, &mut dones);
+                    }
+                    Ok(Command::Shutdown) | Err(_) => break,
+                },
+                recv(ev_rx) -> msg => match msg {
+                    Ok(Ok(ev)) => {
+                        let effects = app.on_model_event(ev);
+                        process_effects_with_sender(effects, &op_tx, &mut outputs, &mut dones);
+                    }
+                    Ok(Err(err)) => {
+                        let effects = app.on_model_error(err);
+                        process_effects_with_sender(effects, &op_tx, &mut outputs, &mut dones);
+                    }
+                    Err(_) => break,
                 }
-                Command::Cancel { id } => app.on_cancel(id),
-                Command::Shutdown => break,
-            };
-
-            process_effects(&mut app, effects, &mut outputs, &mut dones);
+            }
         }
     });
 
     handle
 }
 
-fn process_effects<A: InferenceApp>(
-    app: &mut A,
-    effects: Vec<Effect<A::Output, A::ModelOp, A::Error>>,
-    outputs: &mut HashMap<RequestId, Sender<A::Output>>,
-    dones: &mut HashMap<RequestId, Sender<Result<(), A::Error>>>,
+fn process_effects_with_sender<O, Op, E>(
+    effects: Vec<Effect<O, Op, E>>,
+    op_tx: &Sender<Op>,
+    outputs: &mut HashMap<RequestId, Sender<O>>,
+    dones: &mut HashMap<RequestId, Sender<Result<(), E>>>,
 ) {
-    let mut queue: VecDeque<Effect<A::Output, A::ModelOp, A::Error>> = effects.into();
+    let mut queue: VecDeque<Effect<O, Op, E>> = effects.into();
 
     while let Some(effect) = queue.pop_front() {
         match effect {
@@ -180,10 +205,9 @@ fn process_effects<A: InferenceApp>(
                     let _ = done.send(result);
                 }
             }
-            Effect::RunModel(op) => match app.execute(op) {
-                Ok(ev) => queue.extend(app.on_model_event(ev)),
-                Err(err) => queue.extend(app.on_model_error(err)),
-            },
+            Effect::RunModel(op) => {
+                let _ = op_tx.send(op);
+            }
         }
     }
 }

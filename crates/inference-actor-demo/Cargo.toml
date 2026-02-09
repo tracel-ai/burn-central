@@ -13,6 +13,8 @@ rust-version.workspace = true
 
 [dependencies]
 crossbeam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 axum = { version = "0.7.5" }
