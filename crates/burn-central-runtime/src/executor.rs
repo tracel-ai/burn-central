@@ -9,7 +9,6 @@ use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine}
 use crate::telemetry;
 use burn_central_core::BurnCentral;
 use burn_central_core::experiment::{CancelToken, ExperimentRun};
-use serde_json;
 use std::collections::HashMap;
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
