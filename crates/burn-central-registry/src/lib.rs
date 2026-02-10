@@ -40,12 +40,5 @@ pub use builder::RegistryBuilder;
 pub use diagnostics::CacheDiagnostics;
 pub use error::RegistryError;
 pub use manifest::{ManifestFile, ModelManifest};
-pub use model::{CachedModel, ModelHandle, ModelRef};
+pub use model::{CachedModel, ModelHandle, ModelRef, ModelVersion, ModelVersionSelector};
 pub use registry::Registry;
-
-// Re-export utility functions that might be useful
-pub use cache::{
-    cache_is_valid, file_is_valid, normalize_checksum, safe_join, sanitize_rel_path, sha256_file,
-};
-pub use download::{DownloadTask, download_tasks};
-pub use manifest::{load_manifest, manifest_map, parse_manifest, write_manifest};

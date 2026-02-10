@@ -35,15 +35,15 @@ impl Registry {
         Ok(ModelHandle::new(self.clone(), model))
     }
 
-    pub fn client(&self) -> &Client {
+    pub(crate) fn client(&self) -> &Client {
         &self.client
     }
 
-    pub fn http(&self) -> &HttpClient {
+    pub(crate) fn http(&self) -> &HttpClient {
         &self.http
     }
 
-    pub fn cache_dir(&self) -> &Path {
+    pub(crate) fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }
 }

@@ -9,6 +9,34 @@ use crate::error::RegistryError;
 use crate::manifest::{ModelManifest, load_manifest, manifest_map, parse_manifest, write_manifest};
 use crate::registry::Registry;
 
+/// Selector for which model version to load.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ModelVersionSelector {
+    Latest,
+    Version(u64),
+}
+
+/// Type alias for model version numbers.
+pub type ModelVersion = u64;
+
+impl From<u32> for ModelVersionSelector {
+    fn from(value: u32) -> Self {
+        ModelVersionSelector::Version(value as u64)
+    }
+}
+
+impl From<u64> for ModelVersionSelector {
+    fn from(value: u64) -> Self {
+        ModelVersionSelector::Version(value)
+    }
+}
+
+impl Default for ModelVersionSelector {
+    fn default() -> Self {
+        ModelVersionSelector::Latest
+    }
+}
+
 /// Reference to a model in the registry.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelRef {
@@ -36,7 +64,7 @@ impl ModelRef {
         })
     }
 
-    fn version_dir(&self, root: &Path, version: u32) -> PathBuf {
+    fn version_dir(&self, root: &Path, version: ModelVersion) -> PathBuf {
         root.join(&self.namespace)
             .join(&self.project)
             .join("models")
@@ -98,7 +126,21 @@ impl ModelHandle {
     }
 
     /// Ensure a model version is cached locally.
-    pub fn ensure(&self, version: u32) -> Result<CachedModel, RegistryError> {
+    pub fn ensure(
+        &self,
+        version: impl Into<ModelVersionSelector>,
+    ) -> Result<CachedModel, RegistryError> {
+        let version = match version.into() {
+            ModelVersionSelector::Latest => {
+                let info = self.registry.client().get_model(
+                    self.model.namespace(),
+                    self.model.project(),
+                    self.model.model(),
+                )?;
+                info.version_count - 1
+            }
+            ModelVersionSelector::Version(v) => v,
+        };
         let version_dir = self.model.version_dir(&self.registry.cache_dir(), version);
 
         if let Ok(manifest) = load_manifest(&version_dir) {
@@ -113,7 +155,7 @@ impl ModelHandle {
     /// Download and decode a model version using the bundle decoder.
     pub fn load<T: BundleDecode>(
         &self,
-        version: u32,
+        version: impl Into<ModelVersionSelector>,
         settings: &T::Settings,
     ) -> Result<T, RegistryError> {
         let cached = self.ensure(version)?;
@@ -123,7 +165,7 @@ impl ModelHandle {
 
     fn download_version(
         &self,
-        version: u32,
+        version: ModelVersion,
         version_dir: &Path,
     ) -> Result<CachedModel, RegistryError> {
         fs::create_dir_all(version_dir)?;
@@ -132,7 +174,7 @@ impl ModelHandle {
             self.model.namespace(),
             self.model.project(),
             self.model.model(),
-            version,
+            version as _,
         )?;
 
         let manifest = parse_manifest(version_info.manifest)?;
@@ -140,7 +182,7 @@ impl ModelHandle {
             self.model.namespace(),
             self.model.project(),
             self.model.model(),
-            version,
+            version as _,
         )?;
 
         let manifest_map = manifest_map(&manifest)?;
@@ -178,6 +220,7 @@ impl ModelHandle {
 }
 
 /// Cached model version stored on disk.
+#[derive(Debug, Clone)]
 pub struct CachedModel {
     root: PathBuf,
     manifest: ModelManifest,
