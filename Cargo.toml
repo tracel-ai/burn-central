@@ -59,6 +59,8 @@ tracing-subscriber = "0.3.22"
 # burn-central-client = { version = "0.4.0", path = "../client/burn-central-client" }
 burn-central-client = "0.4.0"
 
+burn-central-registry = { path = "crates/burn-central-registry", version = "0.5.0" }
+
 ## Crate
 burn-central-core = { path = "crates/burn-central-core", version = "0.5.0" }
 burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.5.0" }
