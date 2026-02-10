@@ -1,6 +1,4 @@
-use inference_actor_demo::runtime::{
-    Effect, InferenceApp, ModelExecutor, RequestId, spawn_session,
-};
+use inference_actor_demo::{Action, Actions, ModelExecutor, RequestId, app, spawn_session};
 
 #[derive(Debug, Clone)]
 struct Input {
@@ -36,15 +34,6 @@ impl SimpleModel {
     }
 }
 
-#[derive(Debug)]
-struct DirectApp;
-
-impl DirectApp {
-    fn new() -> Self {
-        Self
-    }
-}
-
 struct DirectExecutor {
     model: SimpleModel,
 }
@@ -62,47 +51,22 @@ impl ModelExecutor<ModelOp, ModelEvent, String> for DirectExecutor {
     }
 }
 
-impl InferenceApp for DirectApp {
-    type Input = Input;
-    type Output = Output;
-    type ModelOp = ModelOp;
-    type ModelEvent = ModelEvent;
-    type Error = String;
-
-    fn on_submit(
-        &mut self,
-        id: RequestId,
-        input: Self::Input,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        vec![Effect::RunModel(ModelOp { id, input })]
-    }
-
-    fn on_cancel(
-        &mut self,
-        id: RequestId,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        vec![Effect::Finish { id, result: Ok(()) }]
-    }
-
-    fn on_model_event(
-        &mut self,
-        event: Self::ModelEvent,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        vec![
-            Effect::Emit {
-                id: event.id,
-                item: event.output,
-            },
-            Effect::Finish {
-                id: event.id,
-                result: Ok(()),
-            },
-        ]
-    }
-}
-
 fn main() {
-    let session = spawn_session(DirectApp::new(), DirectExecutor::new());
+    let app = app(
+        (),
+        |_state: &mut (), id: RequestId, input: Input| {
+            Actions::single(Action::run_model(ModelOp { id, input }))
+        },
+        |_state: &mut (), id: RequestId| Actions::single(Action::finish_ok(id)),
+        |_state: &mut (), event: ModelEvent| {
+            let mut actions = Actions::new();
+            actions.emit(event.id, event.output);
+            actions.finish_ok(event.id);
+            actions
+        },
+    );
+
+    let session = spawn_session(app, DirectExecutor::new());
 
     let job = session.submit(Input { value: 3.0 });
     for out in job.stream.iter() {

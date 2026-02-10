@@ -8,7 +8,7 @@ use std::sync::{
 pub type RequestId = u64;
 
 #[derive(Debug)]
-pub enum Effect<O, Op, E> {
+pub enum Action<O, Op, E> {
     Emit {
         id: RequestId,
         item: O,
@@ -18,6 +18,85 @@ pub enum Effect<O, Op, E> {
         result: Result<(), E>,
     },
     RunModel(Op),
+}
+
+#[derive(Debug, Default)]
+pub struct Actions<O, Op, E>(Vec<Action<O, Op, E>>);
+
+impl<O, Op, E> Actions<O, Op, E> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn single(action: Action<O, Op, E>) -> Self {
+        Self(vec![action])
+    }
+
+    pub fn push(&mut self, action: Action<O, Op, E>) {
+        self.0.push(action);
+    }
+
+    pub fn emit(&mut self, id: RequestId, item: O) {
+        self.0.push(Action::emit(id, item));
+    }
+
+    pub fn finish_ok(&mut self, id: RequestId) {
+        self.0.push(Action::finish_ok(id));
+    }
+
+    pub fn finish(&mut self, id: RequestId, result: Result<(), E>) {
+        self.0.push(Action::finish(id, result));
+    }
+
+    pub fn run_model(&mut self, op: Op) {
+        self.0.push(Action::run_model(op));
+    }
+
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = Action<O, Op, E>>,
+    {
+        self.0.extend(iter);
+    }
+}
+
+impl<O, Op, E> IntoIterator for Actions<O, Op, E> {
+    type Item = Action<O, Op, E>;
+    type IntoIter = std::vec::IntoIter<Action<O, Op, E>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<O, Op, E> From<Action<O, Op, E>> for Actions<O, Op, E> {
+    fn from(action: Action<O, Op, E>) -> Self {
+        Self::single(action)
+    }
+}
+
+impl<O, Op, E> From<Vec<Action<O, Op, E>>> for Actions<O, Op, E> {
+    fn from(actions: Vec<Action<O, Op, E>>) -> Self {
+        Self(actions)
+    }
+}
+
+impl<O, Op, E> Action<O, Op, E> {
+    pub fn emit(id: RequestId, item: O) -> Self {
+        Self::Emit { id, item }
+    }
+
+    pub fn finish(id: RequestId, result: Result<(), E>) -> Self {
+        Self::Finish { id, result }
+    }
+
+    pub fn finish_ok(id: RequestId) -> Self {
+        Self::Finish { id, result: Ok(()) }
+    }
+
+    pub fn run_model(op: Op) -> Self {
+        Self::RunModel(op)
+    }
 }
 
 pub trait ModelExecutor<Op, Event, Error>: Send + 'static {
@@ -35,22 +114,21 @@ pub trait InferenceApp: Send + 'static {
         &mut self,
         id: RequestId,
         input: Self::Input,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>>;
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error>;
 
-    fn on_cancel(&mut self, id: RequestId)
-    -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>>;
+    fn on_cancel(&mut self, id: RequestId) -> Actions<Self::Output, Self::ModelOp, Self::Error>;
 
     fn on_model_event(
         &mut self,
         event: Self::ModelEvent,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>>;
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error>;
 
     fn on_model_error(
         &mut self,
         error: Self::Error,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
         let _ = error;
-        Vec::new()
+        Actions::new()
     }
 }
 
@@ -185,27 +263,27 @@ where
 }
 
 fn process_effects_with_sender<O, Op, E>(
-    effects: Vec<Effect<O, Op, E>>,
+    actions: Actions<O, Op, E>,
     op_tx: &Sender<Op>,
     outputs: &mut HashMap<RequestId, Sender<O>>,
     dones: &mut HashMap<RequestId, Sender<Result<(), E>>>,
 ) {
-    let mut queue: VecDeque<Effect<O, Op, E>> = effects.into();
+    let mut queue: VecDeque<Action<O, Op, E>> = actions.into_iter().collect();
 
-    while let Some(effect) = queue.pop_front() {
-        match effect {
-            Effect::Emit { id, item } => {
+    while let Some(action) = queue.pop_front() {
+        match action {
+            Action::Emit { id, item } => {
                 if let Some(out) = outputs.get(&id) {
                     let _ = out.send(item);
                 }
             }
-            Effect::Finish { id, result } => {
+            Action::Finish { id, result } => {
                 outputs.remove(&id);
                 if let Some(done) = dones.remove(&id) {
                     let _ = done.send(result);
                 }
             }
-            Effect::RunModel(op) => {
+            Action::RunModel(op) => {
                 let _ = op_tx.send(op);
             }
         }

@@ -1,5 +1,5 @@
 use inference_actor_demo::runtime::{
-    Effect, InferenceApp, ModelExecutor, RequestId, spawn_session,
+    Action, Actions, InferenceApp, ModelExecutor, RequestId, spawn_session,
 };
 use std::collections::HashMap;
 use std::thread;
@@ -26,9 +26,9 @@ impl CounterApp {
         }
     }
 
-    fn schedule_step(&mut self) -> Vec<Effect<TickOut, ModelStepOp, String>> {
+    fn schedule_step(&mut self) -> Actions<TickOut, ModelStepOp, String> {
         if self.step_in_flight || self.active.is_empty() {
-            return Vec::new();
+            return Actions::new();
         }
 
         let mut batch = Vec::with_capacity(self.active.len());
@@ -42,11 +42,11 @@ impl CounterApp {
         }
 
         if batch.is_empty() {
-            return Vec::new();
+            return Actions::new();
         }
 
         self.step_in_flight = true;
-        vec![Effect::RunModel(ModelStepOp { batch })]
+        Actions::single(Action::run_model(ModelStepOp { batch }))
     }
 }
 
@@ -112,26 +112,23 @@ impl InferenceApp for CounterApp {
         &mut self,
         id: RequestId,
         input: Self::Input,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
         self.remaining.insert(id, input);
         self.active.push(id);
         self.schedule_step()
     }
 
-    fn on_cancel(
-        &mut self,
-        id: RequestId,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
+    fn on_cancel(&mut self, id: RequestId) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
         self.remaining.remove(&id);
         self.active.retain(|rid| *rid != id);
-        vec![Effect::Finish { id, result: Ok(()) }]
+        Actions::single(Action::finish_ok(id))
     }
 
     fn on_model_event(
         &mut self,
         event: Self::ModelEvent,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        let mut effects = Vec::new();
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
+        let mut effects = Actions::new();
         self.step_in_flight = false;
 
         for item in event.items {
@@ -140,15 +137,9 @@ impl InferenceApp for CounterApp {
             } else {
                 self.remaining.insert(item.id, item.remaining);
             }
-            effects.push(Effect::Emit {
-                id: item.id,
-                item: item.out,
-            });
+            effects.emit(item.id, item.out);
             if item.done {
-                effects.push(Effect::Finish {
-                    id: item.id,
-                    result: Ok(()),
-                });
+                effects.finish_ok(item.id);
             }
         }
 
@@ -166,14 +157,11 @@ impl InferenceApp for CounterApp {
     fn on_model_error(
         &mut self,
         err: Self::Error,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        let mut effects = Vec::new();
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
+        let mut effects = Actions::new();
         self.step_in_flight = false;
         for id in self.active.drain(..) {
-            effects.push(Effect::Finish {
-                id,
-                result: Err(err.clone()),
-            });
+            effects.finish(id, Err(err.clone()));
         }
         effects
     }

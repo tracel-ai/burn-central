@@ -4,7 +4,7 @@ use burn::tensor::{ElementConversion, Shape, Tensor, TensorData, activation};
 use inference_actor_demo::JsonSession;
 use inference_actor_demo::erased::InferenceSpec;
 use inference_actor_demo::runtime::{
-    Effect, InferenceApp, ModelExecutor, RequestId, spawn_session,
+    Action, Actions, InferenceApp, ModelExecutor, RequestId, spawn_session,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,7 +17,6 @@ pub struct GenerateRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StepOut {
-    pub id: RequestId,
     pub index: usize,
     pub sample: f32,
 }
@@ -84,9 +83,9 @@ impl<B: Backend> RnnApp<B> {
         }
     }
 
-    fn schedule_step(&mut self) -> Vec<Effect<StepOut, ModelStepOp<B>, String>> {
+    fn schedule_step(&mut self) -> Actions<StepOut, ModelStepOp<B>, String> {
         if self.step_in_flight || self.active.is_empty() {
-            return Vec::new();
+            return Actions::new();
         }
 
         let batch_size = self.active.len();
@@ -105,12 +104,12 @@ impl<B: Backend> RnnApp<B> {
         }
 
         self.step_in_flight = true;
-        vec![Effect::RunModel(ModelStepOp {
+        Actions::single(Action::run_model(ModelStepOp {
             ids,
             input,
             hidden,
             batch_size,
-        })]
+        }))
     }
 }
 
@@ -143,7 +142,7 @@ where
         &mut self,
         id: RequestId,
         input: Self::Input,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
         let input_value = input.value.elem::<B::FloatElem>();
         let input_vec = vec![input_value; INPUT_DIM];
         let hidden = vec![0.0f32.elem::<B::FloatElem>(); HIDDEN_DIM];
@@ -160,20 +159,17 @@ where
         self.schedule_step()
     }
 
-    fn on_cancel(
-        &mut self,
-        id: RequestId,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
+    fn on_cancel(&mut self, id: RequestId) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
         self.requests.remove(&id);
         self.active.retain(|rid| *rid != id);
-        vec![Effect::Finish { id, result: Ok(()) }]
+        Actions::single(Action::finish_ok(id))
     }
 
     fn on_model_event(
         &mut self,
         event: Self::ModelEvent,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        let mut effects = Vec::new();
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
+        let mut actions = Actions::new();
         self.step_in_flight = false;
 
         let ModelStepResult {
@@ -202,19 +198,9 @@ where
                 .hidden
                 .copy_from_slice(&hidden[hidden_start..hidden_end]);
 
-            effects.push(Effect::Emit {
-                id: *id,
-                item: StepOut {
-                    id: *id,
-                    index,
-                    sample,
-                },
-            });
+            actions.emit(*id, StepOut { index, sample });
             if done {
-                effects.push(Effect::Finish {
-                    id: *id,
-                    result: Ok(()),
-                });
+                actions.finish_ok(*id);
             }
         }
 
@@ -225,23 +211,20 @@ where
                 .unwrap_or(false)
         });
 
-        effects.extend(self.schedule_step());
-        effects
+        actions.extend(self.schedule_step());
+        actions
     }
 
     fn on_model_error(
         &mut self,
         error: Self::Error,
-    ) -> Vec<Effect<Self::Output, Self::ModelOp, Self::Error>> {
-        let mut effects = Vec::new();
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error> {
+        let mut actions = Actions::new();
         self.step_in_flight = false;
         for id in self.active.drain(..) {
-            effects.push(Effect::Finish {
-                id,
-                result: Err(error.clone()),
-            });
+            actions.finish(id, Err(error.clone()));
         }
-        effects
+        actions
     }
 }
 
