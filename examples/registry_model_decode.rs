@@ -13,7 +13,10 @@ impl BundleDecode for RawConfig {
     type Settings = ();
     type Error = std::io::Error;
 
-    fn decode<I: BundleSource>(source: &I, _settings: &Self::Settings) -> Result<Self, Self::Error> {
+    fn decode<I: BundleSource>(
+        source: &I,
+        _settings: &Self::Settings,
+    ) -> Result<Self, Self::Error> {
         let mut reader = source
             .open("config.json")
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -35,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Cached model at: {}", cached.path().display());
     println!("Files: {:?}", cached.reader().list()?);
 
-    let config = model.decode::<RawConfig>(1, &())?;
+    let config = model.load::<RawConfig>(1, &())?;
     println!("config.json: {}", config.json);
 
     Ok(())
