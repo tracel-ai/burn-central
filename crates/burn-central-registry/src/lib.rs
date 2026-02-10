@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use burn_central_client::{BurnCentralCredentials, Client, ClientError, Env};
-use burn_central_core::bundle::{normalize_bundle_path, BundleDecode, BundleSource};
+use burn_central_core::bundle::{normalize_bundle_path, BundleDecode, FsBundleReader};
 use crossbeam::channel;
 use directories::{BaseDirs, ProjectDirs};
 use reqwest::blocking::Client as HttpClient;
@@ -415,33 +415,6 @@ pub struct ManifestFile {
     pub size_bytes: u64,
     /// Checksum (sha256).
     pub checksum: String,
-}
-
-/// File-backed bundle reader.
-#[derive(Clone)]
-pub struct FsBundleReader {
-    root: PathBuf,
-    files: Vec<String>,
-}
-
-impl FsBundleReader {
-    /// Create a file-backed bundle reader.
-    pub fn new(root: PathBuf, files: Vec<String>) -> Self {
-        Self { root, files }
-    }
-}
-
-impl BundleSource for FsBundleReader {
-    fn open(&self, path: &str) -> Result<Box<dyn Read + Send>, String> {
-        let rel = sanitize_rel_path(path).map_err(|e| e.to_string())?;
-        let full = self.root.join(rel);
-        let file = File::open(full).map_err(|e| e.to_string())?;
-        Ok(Box::new(file))
-    }
-
-    fn list(&self) -> Result<Vec<String>, String> {
-        Ok(self.files.clone())
-    }
 }
 
 const MANIFEST_FILE: &str = "manifest.json";
