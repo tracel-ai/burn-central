@@ -362,6 +362,7 @@ dependencies = [
  "burn",
  "burn-central-client",
  "crossbeam",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

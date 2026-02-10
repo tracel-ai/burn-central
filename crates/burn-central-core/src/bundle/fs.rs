@@ -122,16 +122,37 @@ pub struct FsBundleFile {
 }
 
 /// File-backed bundle reader for streaming decode.
-#[derive(Clone)]
 pub struct FsBundleReader {
     root: PathBuf,
     files: Vec<String>,
+    #[allow(unused)]
+    _temp: Option<TempDir>,
 }
 
 impl FsBundleReader {
     /// Create a file-backed bundle reader.
     pub fn new(root: PathBuf, files: Vec<String>) -> Self {
-        Self { root, files }
+        Self {
+            root,
+            files,
+            _temp: None,
+        }
+    }
+
+    /// Create a temporary bundle reader that cleans up on drop.
+    pub fn temp(files: Vec<String>) -> Result<Self, std::io::Error> {
+        let temp = TempDir::new()?;
+        let root = temp.path().to_path_buf();
+        Ok(Self {
+            root,
+            files,
+            _temp: Some(temp),
+        })
+    }
+
+    /// Root directory for the bundle files.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 }
 
