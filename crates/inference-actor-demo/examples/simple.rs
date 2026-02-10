@@ -6,7 +6,6 @@ use std::thread;
 
 #[derive(Debug, Clone)]
 struct TickOut {
-    id: RequestId,
     index: usize,
 }
 
@@ -86,10 +85,7 @@ impl ModelExecutor<ModelStepOp, ModelStepResult, String> for CounterExecutor {
                 remaining -= 1;
             }
             let done = remaining == 0;
-            let out = TickOut {
-                id: input.id,
-                index,
-            };
+            let out = TickOut { index };
             items.push(StepResult {
                 id: input.id,
                 remaining,
