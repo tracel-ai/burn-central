@@ -130,9 +130,10 @@ where
 pub trait InferenceApp: Send + 'static {
     type Input: Send + 'static;
     type Output: Send + 'static;
+    type Error: Send + 'static;
     type ModelOp: Send + 'static;
     type ModelEvent: Send + 'static;
-    type Error: Send + 'static;
+    type ModelError: Send + 'static;
     type Key: Send + 'static;
 
     fn on_submit(
@@ -155,12 +156,8 @@ pub trait InferenceApp: Send + 'static {
     fn on_model_error(
         &mut self,
         key: Self::Key,
-        error: Self::Error,
-    ) -> Actions<Self::Output, Self::ModelOp, Self::Error, Self::Key> {
-        let _ = key;
-        let _ = error;
-        Actions::new()
-    }
+        error: Self::ModelError,
+    ) -> Actions<Self::Output, Self::ModelOp, Self::Error, Self::Key>;
 }
 
 enum Command<I, M, E> {
@@ -235,11 +232,11 @@ impl<I: Send + 'static, O: Send + 'static, E: Send + 'static> SessionHandle<I, O
 pub fn spawn_session<A, X>(mut app: A, mut model: X) -> SessionHandle<A::Input, A::Output, A::Error>
 where
     A: InferenceApp,
-    X: ModelExecutor<A::ModelOp, A::ModelEvent, A::Error>,
+    X: ModelExecutor<A::ModelOp, A::ModelEvent, A::ModelError>,
 {
     let (tx, rx) = channel::unbounded::<Command<A::Input, A::Output, A::Error>>();
     let (op_tx, op_rx) = channel::unbounded::<(A::Key, A::ModelOp)>();
-    let (ev_tx, ev_rx) = channel::unbounded::<(A::Key, Result<A::ModelEvent, A::Error>)>();
+    let (ev_tx, ev_rx) = channel::unbounded::<(A::Key, Result<A::ModelEvent, A::ModelError>)>();
 
     let handle = SessionHandle {
         tx: tx.clone(),

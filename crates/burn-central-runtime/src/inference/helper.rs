@@ -2,58 +2,14 @@ use std::marker::PhantomData;
 
 use crate::inference::{Actions, InferenceApp, ModelExecutor, RequestId};
 
-fn default_on_model_error<State, Output, ModelOp, Error, Key>(
-    _state: &mut State,
-    _key: Key,
-    _error: Error,
-) -> Actions<Output, ModelOp, Error, Key> {
-    Actions::new()
-}
-
-pub fn app<State, Input, Output, ModelOp, ModelEvent, Error, Key, Submit, Cancel, ModelEventFn>(
-    state: State,
-    on_submit: Submit,
-    on_cancel: Cancel,
-    on_model_event: ModelEventFn,
-) -> impl InferenceApp<
-    Input = Input,
-    Output = Output,
-    ModelOp = ModelOp,
-    ModelEvent = ModelEvent,
-    Error = Error,
-    Key = Key,
->
-where
-    State: Send + 'static,
-    Input: Send + 'static,
-    Output: Send + 'static,
-    ModelOp: Send + 'static,
-    ModelEvent: Send + 'static,
-    Error: Send + 'static,
-    Key: Send + 'static,
-    Submit: FnMut(&mut State, RequestId, Input) -> Actions<Output, ModelOp, Error, Key>
-        + Send
-        + 'static,
-    Cancel: FnMut(&mut State, RequestId) -> Actions<Output, ModelOp, Error, Key> + Send + 'static,
-    ModelEventFn:
-        FnMut(&mut State, Key, ModelEvent) -> Actions<Output, ModelOp, Error, Key> + Send + 'static,
-{
-    app_with_error(
-        state,
-        on_submit,
-        on_cancel,
-        on_model_event,
-        default_on_model_error::<State, Output, ModelOp, Error, Key>,
-    )
-}
-
-pub fn app_with_error<
+pub fn app<
     State,
     Input,
     Output,
+    Error,
     ModelOp,
     ModelEvent,
-    Error,
+    ModelError,
     Key,
     Submit,
     Cancel,
@@ -68,9 +24,10 @@ pub fn app_with_error<
 ) -> impl InferenceApp<
     Input = Input,
     Output = Output,
+    Error = Error,
     ModelOp = ModelOp,
     ModelEvent = ModelEvent,
-    Error = Error,
+    ModelError = ModelError,
     Key = Key,
 >
 where
@@ -80,6 +37,7 @@ where
     ModelOp: Send + 'static,
     ModelEvent: Send + 'static,
     Error: Send + 'static,
+    ModelError: Send + 'static,
     Key: Send + 'static,
     Submit: FnMut(&mut State, RequestId, Input) -> Actions<Output, ModelOp, Error, Key>
         + Send
@@ -88,7 +46,7 @@ where
     ModelEventFn:
         FnMut(&mut State, Key, ModelEvent) -> Actions<Output, ModelOp, Error, Key> + Send + 'static,
     ModelErrorFn:
-        FnMut(&mut State, Key, Error) -> Actions<Output, ModelOp, Error, Key> + Send + 'static,
+        FnMut(&mut State, Key, ModelError) -> Actions<Output, ModelOp, Error, Key> + Send + 'static,
 {
     use std::marker::PhantomData;
 
@@ -96,9 +54,10 @@ where
         State,
         Input,
         Output,
+        Error,
         ModelOp,
         ModelEvent,
-        Error,
+        ModelError,
         Key,
         Submit,
         Cancel,
@@ -110,16 +69,17 @@ where
         on_cancel: Cancel,
         on_model_event: ModelEventFn,
         on_model_error: ModelErrorFn,
-        _types: PhantomData<(Input, Output, ModelOp, ModelEvent, Error, Key)>,
+        _types: PhantomData<(Input, Output, ModelOp, ModelEvent, Error, ModelError, Key)>,
     }
 
     impl<
         State,
         Input,
         Output,
+        Error,
         ModelOp,
         ModelEvent,
-        Error,
+        ModelError,
         Key,
         Submit,
         Cancel,
@@ -130,9 +90,10 @@ where
             State,
             Input,
             Output,
+            Error,
             ModelOp,
             ModelEvent,
-            Error,
+            ModelError,
             Key,
             Submit,
             Cancel,
@@ -146,6 +107,7 @@ where
         ModelOp: Send + 'static,
         ModelEvent: Send + 'static,
         Error: Send + 'static,
+        ModelError: Send + 'static,
         Key: Send + 'static,
         Submit: FnMut(&mut State, RequestId, Input) -> Actions<Output, ModelOp, Error, Key>
             + Send
@@ -155,14 +117,16 @@ where
         ModelEventFn: FnMut(&mut State, Key, ModelEvent) -> Actions<Output, ModelOp, Error, Key>
             + Send
             + 'static,
-        ModelErrorFn:
-            FnMut(&mut State, Key, Error) -> Actions<Output, ModelOp, Error, Key> + Send + 'static,
+        ModelErrorFn: FnMut(&mut State, Key, ModelError) -> Actions<Output, ModelOp, Error, Key>
+            + Send
+            + 'static,
     {
         type Input = Input;
         type Output = Output;
+        type Error = Error;
         type ModelOp = ModelOp;
         type ModelEvent = ModelEvent;
-        type Error = Error;
+        type ModelError = ModelError;
         type Key = Key;
         fn on_submit(
             &mut self,
@@ -190,7 +154,7 @@ where
         fn on_model_error(
             &mut self,
             key: Self::Key,
-            error: Self::Error,
+            error: Self::ModelError,
         ) -> Actions<Self::Output, Self::ModelOp, Self::Error, Self::Key> {
             (self.on_model_error)(&mut self.state, key, error)
         }
