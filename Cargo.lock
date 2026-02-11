@@ -409,6 +409,7 @@ dependencies = [
  "anyhow",
  "burn",
  "burn-central-core",
+ "burn-central-registry",
  "clap",
  "crossbeam",
  "derive_more",

@@ -30,8 +30,7 @@
 //!
 //!  ### Macros
 //!  For the `macros`, you only need to know about the register macro that you will use to mark
-//!  your training functions so they can be found by Burn Central CLI. Right now we only support
-//!  the training registration but inference will come soon. Here is
+//!  your training or inference functions so they can be found by Burn Central CLI. Here is
 //!
 //!  #### Example
 //!  ```ignore

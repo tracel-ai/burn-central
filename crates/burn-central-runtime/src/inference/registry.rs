@@ -1,6 +1,6 @@
 use crate::inference::{ErasedSession, JsonSession, SessionHandle};
 use burn::prelude::Backend;
-use burn_central_registry::{ModelVersionSelector, Registry};
+use burn_central_registry::Registry;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::fmt::Display;
