@@ -22,8 +22,6 @@ mod routine;
 mod telemetry;
 mod type_name;
 
-// TODO: document inference module (probably should use the module instead)
-#[doc(hidden)]
 pub mod inference;
 
 // Hide element that are only used internally by the gen crate.
@@ -32,6 +30,7 @@ pub mod cli;
 
 pub use error::RuntimeError;
 pub use executor::{Executor, ExecutorBuilder};
+pub use inference::{InferenceError, InferenceInit, InferenceRegistry};
 pub use params::{
     args::{Args, ExperimentArgs},
     artifact_loader::ArtifactLoader,
