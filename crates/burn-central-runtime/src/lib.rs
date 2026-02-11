@@ -16,6 +16,7 @@
 
 mod error;
 mod executor;
+mod input;
 mod output;
 mod params;
 mod routine;
@@ -30,7 +31,6 @@ pub mod cli;
 
 pub use error::RuntimeError;
 pub use executor::{Executor, ExecutorBuilder};
-pub use inference::{InferenceError, InferenceInit, InferenceRegistry};
 pub use params::{
     args::{Args, ExperimentArgs},
     artifact_loader::ArtifactLoader,
