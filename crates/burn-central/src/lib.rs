@@ -57,3 +57,7 @@ pub use burn_central_macros as macros;
 /// Burn Central Macros. It basically form a wrapper crate that use your declare functions.
 #[doc(inline)]
 pub use burn_central_runtime as runtime;
+
+/// Local registry/cache helpers for downloading models.
+#[doc(inline)]
+pub use burn_central_registry as registry;

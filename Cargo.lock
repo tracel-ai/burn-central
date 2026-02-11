@@ -335,6 +335,7 @@ version = "0.5.0"
 dependencies = [
  "burn-central-core",
  "burn-central-macros",
+ "burn-central-registry",
  "burn-central-runtime",
 ]
 
@@ -361,10 +362,12 @@ dependencies = [
  "burn",
  "burn-central-client",
  "crossbeam",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "strum",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
  "tracing-core",
@@ -381,6 +384,22 @@ dependencies = [
  "strum",
  "syn",
  "syn-serde",
+]
+
+[[package]]
+name = "burn-central-registry"
+version = "0.5.0"
+dependencies = [
+ "burn-central-client",
+ "burn-central-core",
+ "crossbeam",
+ "directories",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
@@ -1385,6 +1404,15 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
 ]
 
 [[package]]
