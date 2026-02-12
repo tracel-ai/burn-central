@@ -16,14 +16,13 @@
 
 mod error;
 mod executor;
+mod input;
 mod output;
 mod params;
 mod routine;
 mod telemetry;
 mod type_name;
 
-// TODO: document inference module (probably should use the module instead)
-#[doc(hidden)]
 pub mod inference;
 
 // Hide element that are only used internally by the gen crate.
@@ -33,7 +32,7 @@ pub mod cli;
 pub use error::RuntimeError;
 pub use executor::{Executor, ExecutorBuilder};
 pub use params::{
-    args::{Args, ExperimentArgs},
+    args::{Args, LaunchArgs},
     artifact_loader::ArtifactLoader,
     default::{Model, MultiDevice},
 };

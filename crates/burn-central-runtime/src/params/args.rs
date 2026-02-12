@@ -5,13 +5,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::{executor::ExecutionContext, params::RoutineParam};
 
-/// Trait for experiments arguments. It specify that the type must be serializable, deserializable
-/// and implement default. The reason it must implement default is that when you override a value
-/// it will only override the value you provide, the rest will be filled with the default value.
-pub trait ExperimentArgs: Serialize + for<'de> Deserialize<'de> + Default {}
-impl<T> ExperimentArgs for T where T: Serialize + for<'de> Deserialize<'de> + Default {}
+/// Marker trait for routine arguments.
+///
+/// Argument types must implement [Default] so runtime overrides can be merged on top of defaults.
+pub trait LaunchArgs: Serialize + for<'de> Deserialize<'de> + Default {}
+impl<T> LaunchArgs for T where T: Serialize + for<'de> Deserialize<'de> + Default {}
 
-pub fn deserialize_and_merge_with_default<T: ExperimentArgs>(
+/// Deserialize `args` into `T` after merging it with `T::default()`.
+///
+/// Merge behavior follows JSON Merge Patch semantics:
+/// - object fields are merged recursively
+/// - arrays are replaced as a whole
+/// - `null` clears optional fields
+pub fn deserialize_and_merge_with_default<T: LaunchArgs>(
     args: &serde_json::Value,
 ) -> Result<T, serde_json::Error> {
     let mut merged = serde_json::to_value(T::default())?;
@@ -23,13 +29,13 @@ pub fn deserialize_and_merge_with_default<T: ExperimentArgs>(
 
 /// Args are wrapper around the config you want to inject.
 ///
-/// The type T must implement [ExperimentArgs] trait. This trait allow us to override the
-/// configuration from the CLI arguments you can specify while given us a fallback for arguments
-/// you don't provide.
+/// Use this in routine signatures (`Args<MyArgs>`) to retrieve merged arguments.
+/// The runtime override JSON is merged with `MyArgs::default()`, so omitted fields keep their
+/// default values.
 #[derive(From, Deref)]
-pub struct Args<T: ExperimentArgs>(pub T);
+pub struct Args<T: LaunchArgs>(pub T);
 
-impl<B: Backend, C: ExperimentArgs> RoutineParam<ExecutionContext<B>> for Args<C> {
+impl<B: Backend, C: LaunchArgs> RoutineParam<ExecutionContext<B>> for Args<C> {
     type Item<'new> = Args<C>;
 
     fn try_retrieve(ctx: &ExecutionContext<B>) -> anyhow::Result<Self::Item<'_>> {
