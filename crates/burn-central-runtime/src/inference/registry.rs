@@ -118,7 +118,7 @@ impl<B: Backend, C: LaunchArgs> RoutineParam<InferenceContext<B>> for Args<C> {
     }
 }
 
-type InferenceRoutine<B, O> = BoxedRoutine<InferenceContext<B>, (), O>;
+type InferenceRoutine<B, I> = BoxedRoutine<InferenceContext<B>, (), I>;
 
 trait ErasedFactory<B: Backend>: Send + Sync {
     fn build(&self, ctx: InferenceContext<B>) -> Result<Box<dyn ErasedInference>, InferenceError>;
@@ -155,19 +155,19 @@ where
     }
 }
 
-struct RoutineFactory<B: Backend, O, R> {
+struct RoutineFactory<B: Backend, I, R> {
     name: String,
-    routine: InferenceRoutine<B, O>,
-    _types: PhantomData<fn(O) -> R>,
+    routine: InferenceRoutine<B, I>,
+    _types: PhantomData<fn(I) -> R>,
 }
 
-impl<B, O, R> ErasedFactory<B> for RoutineFactory<B, O, R>
+impl<B, I, R> ErasedFactory<B> for RoutineFactory<B, I, R>
 where
     B: Backend,
-    O: InferenceFactoryReturn<R>,
-    O::Inference: Inference + Send + Sync + 'static,
-    <O::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
-    <O::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
+    I: InferenceFactoryReturn<R>,
+    I::Inference: Inference + Send + Sync + 'static,
+    <I::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
+    <I::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
 {
     fn build(
         &self,
@@ -203,13 +203,13 @@ impl<B: Backend> InferenceRegistry<B> {
         }
     }
 
-    pub fn infer<O, S, M, R>(&mut self, name: impl Into<String>, factory: S) -> &mut Self
+    pub fn infer<I, S, M, R>(&mut self, name: impl Into<String>, factory: S) -> &mut Self
     where
-        O: InferenceFactoryReturn<R>,
-        O::Inference: Inference + Send + Sync + 'static,
-        <O::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
-        <O::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
-        S: IntoRoutine<InferenceContext<B>, (), O, M> + 'static,
+        I: InferenceFactoryReturn<R>,
+        I::Inference: Inference + Send + Sync + 'static,
+        <I::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
+        <I::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
+        S: IntoRoutine<InferenceContext<B>, (), I, M> + 'static,
         M: 'static,
         R: 'static,
     {
@@ -241,18 +241,18 @@ impl<B: Backend> InferenceRegistry<B> {
     }
 }
 
-pub fn build<B, O, S, M, R>(
+pub fn build<B, I, S, M, R>(
     factory: S,
     creds: impl Into<BurnCentralCredentials>,
     args: Option<impl Into<InferenceArgs>>,
 ) -> Result<Box<dyn ErasedInference>, InferenceError>
 where
     B: Backend,
-    O: InferenceFactoryReturn<R>,
-    O::Inference: Inference + Send + Sync + 'static,
-    <O::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
-    <O::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
-    S: IntoRoutine<InferenceContext<B>, (), O, M> + 'static,
+    I: InferenceFactoryReturn<R>,
+    I::Inference: Inference + Send + Sync + 'static,
+    <I::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
+    <I::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
+    S: IntoRoutine<InferenceContext<B>, (), I, M> + 'static,
     M: 'static,
     R: 'static,
 {
