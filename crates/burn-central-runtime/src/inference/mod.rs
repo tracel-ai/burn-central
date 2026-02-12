@@ -4,7 +4,7 @@ mod erased;
 mod registry;
 
 pub use erased::{ErasedInference, ErasedInferenceWriter, JsonInference};
-pub use registry::{InferenceError, InferenceRegistry, build};
+pub use registry::{InferenceError, InferenceInit, InferenceRegistry, build};
 
 /// Communication channel for an inference task, allowing the app to send outputs and errors back to the session.
 pub struct InferenceWriter<O> {
@@ -43,18 +43,24 @@ impl<O> InferenceWriter<O> {
     }
 }
 
+/// When the `InferenceWriter` is dropped, it signals that the inference has finished, allowing the channel to perform any necessary cleanup or finalization.
 impl<O> Drop for InferenceWriter<O> {
     fn drop(&mut self) {
         self.channel.finish(self.instant.elapsed());
     }
 }
 
+/// Trait representing an inference task that can be executed with a given input and a writer for outputs.
+/// The inference implementation is responsible for writing outputs and errors to the provided writer, which will be sent back to the session.
 pub trait InferenceWriterChannel<O> {
+    /// Write an output item to the channel. This can be called multiple times to emit multiple items.
     fn write(&self, output: O) -> Result<(), InferenceWriterError>;
+    /// Signal an error on the inference, which will be sent back to the session.
     fn error(
         &self,
         error: Box<dyn std::error::Error + Send + Sync>,
     ) -> Result<(), InferenceWriterError>;
+    /// Called when the `InferenceWriter` is dropped, allowing the channel to perform any necessary cleanup or finalization.
     fn finish(&self, duration: std::time::Duration);
 }
 
