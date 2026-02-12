@@ -32,7 +32,7 @@ pub mod cli;
 pub use error::RuntimeError;
 pub use executor::{Executor, ExecutorBuilder};
 pub use params::{
-    args::{Args, ExperimentArgs},
+    args::{Args, LaunchArgs},
     artifact_loader::ArtifactLoader,
     default::{Model, MultiDevice},
 };

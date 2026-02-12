@@ -1,66 +1,95 @@
-use crate::inference::{Job, RequestId, SessionHandle};
+use crate::inference::{Inference, InferenceWriter, InferenceWriterChannel, InferenceWriterError};
 use serde::{Serialize, de::DeserializeOwned};
-use std::fmt::Display;
+use std::error::Error;
+use std::fmt;
+use std::marker::PhantomData;
+use std::time::Duration;
 
-pub trait ErasedSession: Send + Sync {
-    fn submit_bytes(&self, input: &[u8]) -> Result<Box<dyn ErasedJob>, String>;
+pub trait ErasedInference: Send + Sync {
+    fn infer_bytes(
+        &self,
+        input: &[u8],
+        writer: Box<dyn ErasedInferenceWriter>,
+    ) -> Result<(), String>;
 }
 
-pub trait ErasedJob: Send {
-    fn try_recv_bytes(&mut self) -> Result<Option<Vec<u8>>, String>;
-    fn join(self: Box<Self>) -> Result<(), String>;
-    fn id(&self) -> RequestId;
+pub trait ErasedInferenceWriter: Send + Sync {
+    fn write_bytes(&self, output: Vec<u8>) -> Result<(), String>;
+    fn error(&self, error: String) -> Result<(), String>;
+    fn finish(&self, duration: Duration);
 }
 
-pub struct JsonSession<I, O, E> {
-    inner: SessionHandle<I, O, E>,
+pub struct JsonInference<T, I, O> {
+    inner: T,
+    _types: PhantomData<fn(I, O)>,
 }
 
-impl<I, O, E> JsonSession<I, O, E> {
-    pub fn new(inner: SessionHandle<I, O, E>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<I, O, E> ErasedSession for JsonSession<I, O, E>
-where
-    I: DeserializeOwned + Send + 'static,
-    O: Serialize + Send + 'static,
-    E: Display + Send + 'static,
-{
-    fn submit_bytes(&self, input: &[u8]) -> Result<Box<dyn ErasedJob>, String> {
-        let req: I = serde_json::from_slice(input).map_err(|e| e.to_string())?;
-        let job = self.inner.submit(req);
-        Ok(Box::new(JsonJob { job }))
-    }
-}
-
-struct JsonJob<I, O, E> {
-    job: Job<I, O, E>,
-}
-
-impl<I, O, E> ErasedJob for JsonJob<I, O, E>
-where
-    I: Send + 'static,
-    O: Serialize + Send + 'static,
-    E: Display + Send + 'static,
-{
-    fn try_recv_bytes(&mut self) -> Result<Option<Vec<u8>>, String> {
-        match self.job.stream.try_recv() {
-            Ok(item) => {
-                let bytes = serde_json::to_vec(&item).map_err(|e| e.to_string())?;
-                Ok(Some(bytes))
-            }
-            Err(crossbeam::channel::TryRecvError::Empty) => Ok(None),
-            Err(crossbeam::channel::TryRecvError::Disconnected) => Err("stream closed".to_string()),
+impl<T, I, O> JsonInference<T, I, O> {
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            _types: PhantomData,
         }
     }
+}
 
-    fn join(self: Box<Self>) -> Result<(), String> {
-        self.job.join().map_err(|e| e.to_string())
+impl<T, I, O> ErasedInference for JsonInference<T, I, O>
+where
+    T: Inference<Input = I, Output = O> + Send + Sync + 'static,
+    I: DeserializeOwned + Send + 'static,
+    O: Serialize + Send + 'static,
+{
+    fn infer_bytes(
+        &self,
+        input: &[u8],
+        writer: Box<dyn ErasedInferenceWriter>,
+    ) -> Result<(), String> {
+        let input: I = serde_json::from_slice(input).map_err(|e| e.to_string())?;
+        let channel = JsonInferenceWriterChannel::<O> {
+            writer,
+            _types: PhantomData,
+        };
+        let writer = InferenceWriter::new(Box::new(channel));
+        self.inner.infer(input, writer);
+        Ok(())
+    }
+}
+
+struct JsonInferenceWriterChannel<O> {
+    writer: Box<dyn ErasedInferenceWriter>,
+    _types: PhantomData<fn(O)>,
+}
+
+#[derive(Debug)]
+struct StringError(String);
+
+impl fmt::Display for StringError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Error for StringError {}
+
+impl<O> InferenceWriterChannel<O> for JsonInferenceWriterChannel<O>
+where
+    O: Serialize,
+{
+    fn write(&self, output: O) -> Result<(), InferenceWriterError> {
+        let bytes =
+            serde_json::to_vec(&output).map_err(|e| InferenceWriterError::Unknown(Box::new(e)))?;
+        self.writer
+            .write_bytes(bytes)
+            .map_err(|err| InferenceWriterError::Unknown(Box::new(StringError(err))))
     }
 
-    fn id(&self) -> RequestId {
-        self.job.id
+    fn error(&self, error: Box<dyn Error + Send + Sync>) -> Result<(), InferenceWriterError> {
+        self.writer
+            .error(error.to_string())
+            .map_err(|err| InferenceWriterError::Unknown(Box::new(StringError(err))))
+    }
+
+    fn finish(&self, duration: Duration) {
+        self.writer.finish(duration);
     }
 }

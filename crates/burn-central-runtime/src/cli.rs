@@ -31,8 +31,8 @@ pub struct RuntimeArgs {
     /// register macro.
     pub routine: String,
     /// JSON string representing the arguments to pass to the routine. The arguments pass here are
-    /// self define by the user. Value found in this field will be merge with the Config the user
-    /// is requesting using [Args] extractor in his training function.
+    /// self-defined by the user. Values in this field are merged with the target config when a
+    /// routine requests `Args<T>`.
     #[arg(long, default_value = "{}")]
     pub args: String,
     /// Burn Central configuration arguments.
