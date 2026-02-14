@@ -1,7 +1,7 @@
 use crate::inference::{ErasedInference, Inference, JsonInference};
 use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
-use crate::routine::{BoxedRoutine, IntoRoutine};
+use crate::routine::{BoxedRoutine, IntoRoutine, Routine};
 use crate::{Args, MultiDevice};
 use burn::prelude::Backend;
 use burn_central_core::{BurnCentralCredentials, Env};
@@ -241,35 +241,51 @@ impl<B: Backend> InferenceRegistry<B> {
     }
 }
 
-pub fn build<B, I, S, M, R>(
-    factory: S,
+fn build_registry_for_inference(
     creds: impl Into<BurnCentralCredentials>,
-    args: Option<impl Into<InferenceArgs>>,
-) -> Result<Box<dyn ErasedInference>, InferenceError>
-where
-    B: Backend,
-    I: InferenceFactoryReturn<R>,
-    I::Inference: Inference + Send + Sync + 'static,
-    <I::Inference as Inference>::Input: DeserializeOwned + Send + Sync + 'static,
-    <I::Inference as Inference>::Output: Serialize + Send + Sync + 'static,
-    S: IntoRoutine<InferenceContext<B>, (), I, M> + 'static,
-    M: 'static,
-    R: 'static,
-{
-    let model_registry = RegistryBuilder::new(creds.into())
+) -> Result<Registry, InferenceError> {
+    RegistryBuilder::new(creds.into())
         .with_env(Env::Development)
         .build()
         .map_err(|e| InferenceError::FactoryFailed {
             name: "registry build".to_string(),
             message: e.to_string(),
-        })?;
-    let mut registry = InferenceRegistry::new();
-    let n = tynm::type_name::<S>();
-    registry.infer(&n, factory);
+        })
+}
 
-    let init = InferenceInit {
-        registry: model_registry,
-        device: B::Device::default(),
-    };
-    registry.build_inference(&n, init, args)
+/// Build a typed inference instance directly from a factory routine.
+pub fn build_typed<B, I, M, R>(
+    factory: impl IntoRoutine<InferenceContext<B>, (), I, M>,
+    creds: impl Into<BurnCentralCredentials>,
+    args: Option<impl Into<InferenceArgs>>,
+) -> Result<I::Inference, InferenceError>
+where
+    B: Backend,
+    I: InferenceFactoryReturn<R>,
+    I::Inference: Inference + Send + Sync + 'static,
+    M: 'static,
+    R: 'static,
+{
+    let model_registry = build_registry_for_inference(creds)?;
+    let mut ctx = InferenceContext::new(
+        InferenceInit {
+            registry: model_registry,
+            device: B::Device::default(),
+        },
+        args.map(|a| a.into()).unwrap_or_default(),
+    );
+
+    let routine = IntoRoutine::into_routine(factory);
+    let name = routine.name().to_string();
+    let factory_output =
+        routine
+            .run((), &mut ctx)
+            .map_err(|err| InferenceError::FactoryFailed {
+                name: name.clone(),
+                message: err.to_string(),
+            })?;
+
+    factory_output
+        .into_inference()
+        .map_err(|message| InferenceError::FactoryFailed { name, message })
 }

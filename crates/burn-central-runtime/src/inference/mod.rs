@@ -2,9 +2,14 @@
 
 mod erased;
 mod registry;
+mod stream;
 
 pub use erased::{ErasedInference, ErasedInferenceWriter, JsonInference};
-pub use registry::{InferenceError, InferenceInit, InferenceRegistry, build};
+pub use registry::{InferenceArgs, InferenceError, InferenceInit, InferenceRegistry, build_typed};
+pub use stream::*;
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Communication channel for an inference task, allowing the app to send outputs and errors back to the session.
 pub struct InferenceWriter<O> {
@@ -29,6 +34,13 @@ impl<O> InferenceWriter<O> {
         }
     }
 
+    fn from_channel<C>(channel: C) -> Self
+    where
+        C: InferenceWriterChannel<O> + 'static,
+    {
+        Self::new(Box::new(channel))
+    }
+
     /// Respond with an output item. This can be called multiple times to emit multiple items.
     pub fn write(&self, output: O) -> Result<(), InferenceWriterError> {
         self.channel.write(output)
@@ -41,12 +53,16 @@ impl<O> InferenceWriter<O> {
     {
         self.channel.error(error.into())
     }
+
+    fn finish(&self) {
+        self.channel.finish(self.instant.elapsed());
+    }
 }
 
 /// When the `InferenceWriter` is dropped, it signals that the inference has finished, allowing the channel to perform any necessary cleanup or finalization.
 impl<O> Drop for InferenceWriter<O> {
     fn drop(&mut self) {
-        self.channel.finish(self.instant.elapsed());
+        self.finish();
     }
 }
 
