@@ -30,6 +30,7 @@ serde.workspace = true
 json-patch.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+opentelemetry.workspace = true
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

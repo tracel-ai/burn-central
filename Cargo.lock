@@ -415,6 +415,7 @@ dependencies = [
  "derive_more",
  "json-patch",
  "log",
+ "opentelemetry",
  "serde",
  "serde_json",
  "strum",
@@ -2952,6 +2953,20 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "opentelemetry"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b84bcd6ae87133e903af7ef497404dda70c60d0ea14895fc8a5e6722754fc2a0"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

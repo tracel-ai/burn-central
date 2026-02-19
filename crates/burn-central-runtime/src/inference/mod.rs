@@ -3,18 +3,28 @@
 mod erased;
 mod registry;
 mod stream;
+mod telemetry;
 
 pub use erased::{ErasedInference, ErasedInferenceWriter, JsonInference};
 pub use registry::{InferenceArgs, InferenceError, InferenceInit, InferenceRegistry, build_typed};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 pub use stream::*;
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use telemetry::{InferenceMetadata, RequestTelemetry, Telemetry};
 
 /// Communication channel for an inference task, allowing the app to send outputs and errors back to the session.
 pub struct InferenceWriter<O> {
     channel: Box<dyn InferenceWriterChannel<O>>,
     instant: std::time::Instant,
+    telemetry: Arc<dyn Telemetry>,
+    metadata: InferenceMetadata,
+    outputs: AtomicUsize,
+    errors: AtomicUsize,
+    cancelled: AtomicBool,
+    finished: AtomicBool,
 }
 
 /// Errors that can occur when writing to an inference channel.
@@ -31,6 +41,12 @@ impl<O> InferenceWriter<O> {
         Self {
             channel,
             instant: std::time::Instant::now(),
+            telemetry: self::telemetry::telemetry(),
+            metadata: InferenceMetadata::default(),
+            outputs: AtomicUsize::new(0),
+            errors: AtomicUsize::new(0),
+            cancelled: AtomicBool::new(false),
+            finished: AtomicBool::new(false),
         }
     }
 
@@ -41,9 +57,25 @@ impl<O> InferenceWriter<O> {
         Self::new(Box::new(channel))
     }
 
+    pub(crate) fn with_metadata(mut self, metadata: InferenceMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
     /// Respond with an output item. This can be called multiple times to emit multiple items.
     pub fn write(&self, output: O) -> Result<(), InferenceWriterError> {
-        self.channel.write(output)
+        match self.channel.write(output) {
+            Ok(()) => {
+                self.outputs.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(err) => {
+                if matches!(&err, InferenceWriterError::Cancelled) {
+                    self.cancelled.store(true, Ordering::Release);
+                }
+                Err(err)
+            }
+        }
     }
 
     /// Signal an error on the inference.
@@ -51,11 +83,37 @@ impl<O> InferenceWriter<O> {
     where
         E: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        self.channel.error(error.into())
+        match self.channel.error(error.into()) {
+            Ok(()) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(err) => {
+                if matches!(&err, InferenceWriterError::Cancelled) {
+                    self.cancelled.store(true, Ordering::Release);
+                }
+                Err(err)
+            }
+        }
     }
 
     fn finish(&self) {
-        self.channel.finish(self.instant.elapsed());
+        let duration = self.instant.elapsed();
+        self.channel.finish(duration);
+
+        if self.finished.swap(true, Ordering::AcqRel) {
+            return;
+        }
+
+        self.telemetry.record_request(RequestTelemetry {
+            inference_name: self.metadata.inference_name.clone(),
+            model_name: self.metadata.model_name.clone(),
+            model_version: self.metadata.model_version.clone(),
+            duration,
+            outputs: self.outputs.load(Ordering::Acquire),
+            errors: self.errors.load(Ordering::Acquire),
+            cancelled: self.cancelled.load(Ordering::Acquire),
+        });
     }
 }
 
@@ -85,4 +143,41 @@ pub trait Inference {
     type Output;
 
     fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>);
+}
+
+pub struct InferenceWrapper<I, O> {
+    inner: Box<dyn Inference<Input = I, Output = O> + Send + Sync>,
+}
+
+impl<I, O> InferenceWrapper<I, O>
+where
+    I: Send + 'static,
+    O: Send + Sync + 'static,
+{
+    fn new<T>(inference: T) -> Self
+    where
+        T: Inference<Input = I, Output = O> + Send + Sync + 'static,
+    {
+        Self {
+            inner: Box::new(inference),
+        }
+    }
+}
+
+impl<T, I, O> From<T> for InferenceWrapper<I, O>
+where
+    T: Inference<Input = I, Output = O> + Send + Sync + 'static,
+    I: Send + 'static,
+    O: Send + Sync + 'static,
+{
+    fn from(inference: T) -> Self {
+        Self::new(inference)
+    }
+}
+
+impl<I, O> InferenceWrapper<I, O> {
+    pub fn infer<T: InferenceWriterChannel<O> + 'static>(&self, input: I, writer: T) {
+        self.inner
+            .infer(input, InferenceWriter::from_channel(writer));
+    }
 }

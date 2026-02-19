@@ -1,4 +1,5 @@
-use crate::inference::{ErasedInference, Inference, JsonInference};
+use crate::inference::telemetry::InstrumentedInference;
+use crate::inference::{ErasedInference, Inference, InferenceMetadata, JsonInference};
 use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine, Routine};
@@ -187,6 +188,9 @@ where
                     name: self.name.clone(),
                     message,
                 })?;
+        let metadata = InferenceMetadata::new(self.name.clone(), "unknown", "unknown");
+        let inference = InstrumentedInference::new(inference, metadata);
+
         Ok(Box::new(JsonInference::new(inference)))
     }
 }
@@ -258,6 +262,7 @@ pub fn build_typed<B, I, M, R>(
     factory: impl IntoRoutine<InferenceContext<B>, (), I, M>,
     creds: impl Into<BurnCentralCredentials>,
     args: Option<impl Into<InferenceArgs>>,
+    device: B::Device,
 ) -> Result<I::Inference, InferenceError>
 where
     B: Backend,
@@ -270,7 +275,7 @@ where
     let mut ctx = InferenceContext::new(
         InferenceInit {
             registry: model_registry,
-            device: B::Device::default(),
+            device,
         },
         args.map(|a| a.into()).unwrap_or_default(),
     );
