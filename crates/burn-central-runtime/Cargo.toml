@@ -32,6 +32,9 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 opentelemetry.workspace = true
 
+# Inference
+directories = "6.0.0"
+
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
 serde.workspace = true

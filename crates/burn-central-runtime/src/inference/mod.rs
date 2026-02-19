@@ -1,6 +1,7 @@
 //! Inference contracts and type-erased adapters.
 
 mod erased;
+mod fleet;
 mod registry;
 mod stream;
 mod telemetry;

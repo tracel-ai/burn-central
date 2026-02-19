@@ -413,6 +413,7 @@ dependencies = [
  "clap",
  "crossbeam",
  "derive_more",
+ "directories",
  "json-patch",
  "log",
  "opentelemetry",

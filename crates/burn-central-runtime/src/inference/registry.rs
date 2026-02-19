@@ -1,3 +1,4 @@
+use crate::inference::fleet::{self, DeviceMetadata, FleetRegistrationToken};
 use crate::inference::telemetry::InstrumentedInference;
 use crate::inference::{ErasedInference, Inference, InferenceMetadata, JsonInference};
 use crate::params::RoutineParam;
@@ -260,8 +261,8 @@ fn build_registry_for_inference(
 /// Build a typed inference instance directly from a factory routine.
 pub fn build_typed<B, I, M, R>(
     factory: impl IntoRoutine<InferenceContext<B>, (), I, M>,
-    creds: impl Into<BurnCentralCredentials>,
-    args: Option<impl Into<InferenceArgs>>,
+    token: impl Into<FleetRegistrationToken>,
+    metadata: DeviceMetadata,
     device: B::Device,
 ) -> Result<I::Inference, InferenceError>
 where
@@ -271,7 +272,7 @@ where
     M: 'static,
     R: 'static,
 {
-    let model_registry = build_registry_for_inference(creds)?;
+    let fleet_device = fleet::register(token.into(), metadata);
     let mut ctx = InferenceContext::new(
         InferenceInit {
             registry: model_registry,
