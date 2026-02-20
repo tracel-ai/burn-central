@@ -41,9 +41,9 @@ impl ModelSource {
 }
 
 impl ModelSource {
-    pub fn load<D: BundleDecode>(&self, settings: D::Settings) -> Result<D, D::Error> {
+    pub fn load<D: BundleDecode>(&self, settings: &D::Settings) -> Result<D, D::Error> {
         let reader = FsBundleReader::new(self.root.clone(), self.files.clone());
-        D::decode(&reader, &settings)
+        D::decode(&reader, settings)
     }
 }
 

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use burn_central_core::Env;
 use directories::{BaseDirs, ProjectDirs};
+use serde::Deserialize;
 
 mod model;
 mod state;
@@ -67,9 +68,27 @@ pub struct RegisteredFleetDevice {
     pub token: FleetRegistrationToken,
 }
 
-pub struct SyncSnapshot {}
+pub struct FleetSyncSnapshot {
+    pub model_id: String,
+    pub model_version_id: String,
+    pub runtime_config: serde_json::Value,
+}
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresignedModelFileUrlResponse {
+    pub rel_path: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FleetModelDownloadResponse {
+    pub model_version_id: String,
+    pub files: Vec<PresignedModelFileUrlResponse>,
+}
+
+/// API client for interacting with the fleet management backend.
 pub trait FleetApi {
+    /// Register a new device with the fleet, returning a device token that can be used for subsequent API calls.
     fn register_device(
         &self,
         reg_token: FleetRegistrationToken,
@@ -77,11 +96,18 @@ pub trait FleetApi {
         metadata: DeviceMetadata,
     ) -> Result<RegisteredFleetDevice, FleetError>;
 
+    /// Sync the device state with the fleet, returning any updates to the model version or runtime config.
     fn sync(
         &self,
         device_token: FleetDeviceToken,
         metadata: Option<DeviceMetadata>,
-    ) -> Result<SyncSnapshot, FleetError>;
+    ) -> Result<FleetSyncSnapshot, FleetError>;
+
+    /// Download the model files for the specified model version, returning presigned URLs for each file.
+    fn download_model(
+        &self,
+        device_token: FleetDeviceToken,
+    ) -> Result<FleetModelDownloadResponse, FleetError>;
 }
 
 pub struct NoopFleetApi;
@@ -89,7 +115,7 @@ pub struct NoopFleetApi;
 impl FleetApi for NoopFleetApi {
     fn register_device(
         &self,
-        _token: FleetRegistrationToken,
+        _reg_token: FleetRegistrationToken,
         _identity_key: FleetDeviceIdentityKey,
         _metadata: DeviceMetadata,
     ) -> Result<RegisteredFleetDevice, FleetError> {
@@ -100,9 +126,26 @@ impl FleetApi for NoopFleetApi {
 
     fn sync(
         &self,
-        _token: FleetDeviceToken,
+        _device_token: FleetDeviceToken,
         _metadata: Option<DeviceMetadata>,
-    ) -> Result<SyncSnapshot, FleetError> {
-        Ok(SyncSnapshot {})
+    ) -> Result<FleetSyncSnapshot, FleetError> {
+        Ok(FleetSyncSnapshot {
+            model_id: "noop-model-id".to_string(),
+            model_version_id: "noop-model-version-id".to_string(),
+            runtime_config: serde_json::Value::Null,
+        })
+    }
+
+    fn download_model(
+        &self,
+        _device_token: FleetDeviceToken,
+    ) -> Result<FleetModelDownloadResponse, FleetError> {
+        Ok(FleetModelDownloadResponse {
+            model_version_id: "noop-model-version".to_string(),
+            files: vec![PresignedModelFileUrlResponse {
+                rel_path: "model.bin".to_string(),
+                url: "https://example.com/model.bin".to_string(),
+            }],
+        })
     }
 }
