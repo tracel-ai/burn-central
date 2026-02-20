@@ -7,21 +7,48 @@ mod stream;
 mod telemetry;
 
 pub use erased::{ErasedInference, ErasedInferenceWriter, JsonInference};
-pub use registry::{InferenceArgs, InferenceError, InferenceInit, InferenceRegistry, build_typed};
+pub use registry::{
+    InferenceArgs, InferenceError, InferenceInit, InferenceRegistry, ModelSource,
+    build_fleet_managed,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 pub use stream::*;
 
-use telemetry::{InferenceMetadata, RequestTelemetry, Telemetry};
+use std::time::Duration;
+
+/// Runtime-owned writer statistics for a completed inference request.
+#[derive(Debug, Clone, Copy)]
+pub struct InferenceWriterStats {
+    pub duration: Duration,
+    pub outputs: usize,
+    pub errors: usize,
+    pub cancelled: bool,
+}
+
+/// Observer interface for writer lifecycle events.
+pub trait InferenceWriterObserver: Send + Sync + 'static {
+    fn on_write(&self) {}
+
+    fn on_error(&self) {}
+
+    fn on_cancelled(&self) {}
+
+    fn on_finish(&self, _stats: &InferenceWriterStats) {}
+}
+
+#[derive(Default)]
+struct NoopInferenceWriterObserver;
+
+impl InferenceWriterObserver for NoopInferenceWriterObserver {}
 
 /// Communication channel for an inference task, allowing the app to send outputs and errors back to the session.
 pub struct InferenceWriter<O> {
     channel: Box<dyn InferenceWriterChannel<O>>,
     instant: std::time::Instant,
-    telemetry: Arc<dyn Telemetry>,
-    metadata: InferenceMetadata,
+    observer: Arc<dyn InferenceWriterObserver>,
     outputs: AtomicUsize,
     errors: AtomicUsize,
     cancelled: AtomicBool,
@@ -42,8 +69,7 @@ impl<O> InferenceWriter<O> {
         Self {
             channel,
             instant: std::time::Instant::now(),
-            telemetry: self::telemetry::telemetry(),
-            metadata: InferenceMetadata::default(),
+            observer: Arc::new(NoopInferenceWriterObserver),
             outputs: AtomicUsize::new(0),
             errors: AtomicUsize::new(0),
             cancelled: AtomicBool::new(false),
@@ -58,8 +84,8 @@ impl<O> InferenceWriter<O> {
         Self::new(Box::new(channel))
     }
 
-    pub(crate) fn with_metadata(mut self, metadata: InferenceMetadata) -> Self {
-        self.metadata = metadata;
+    pub(crate) fn with_observer(mut self, observer: Arc<dyn InferenceWriterObserver>) -> Self {
+        self.observer = observer;
         self
     }
 
@@ -68,11 +94,13 @@ impl<O> InferenceWriter<O> {
         match self.channel.write(output) {
             Ok(()) => {
                 self.outputs.fetch_add(1, Ordering::Relaxed);
+                self.observer.on_write();
                 Ok(())
             }
             Err(err) => {
                 if matches!(&err, InferenceWriterError::Cancelled) {
                     self.cancelled.store(true, Ordering::Release);
+                    self.observer.on_cancelled();
                 }
                 Err(err)
             }
@@ -87,11 +115,13 @@ impl<O> InferenceWriter<O> {
         match self.channel.error(error.into()) {
             Ok(()) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
+                self.observer.on_error();
                 Ok(())
             }
             Err(err) => {
                 if matches!(&err, InferenceWriterError::Cancelled) {
                     self.cancelled.store(true, Ordering::Release);
+                    self.observer.on_cancelled();
                 }
                 Err(err)
             }
@@ -106,10 +136,7 @@ impl<O> InferenceWriter<O> {
             return;
         }
 
-        self.telemetry.record_request(RequestTelemetry {
-            inference_name: self.metadata.inference_name.clone(),
-            model_name: self.metadata.model_name.clone(),
-            model_version: self.metadata.model_version.clone(),
+        self.observer.on_finish(&InferenceWriterStats {
             duration,
             outputs: self.outputs.load(Ordering::Acquire),
             errors: self.errors.load(Ordering::Acquire),
@@ -147,17 +174,13 @@ pub trait Inference {
 }
 
 pub struct InferenceWrapper<I, O> {
-    inner: Box<dyn Inference<Input = I, Output = O> + Send + Sync>,
+    inner: Box<dyn Inference<Input = I, Output = O>>,
 }
 
-impl<I, O> InferenceWrapper<I, O>
-where
-    I: Send + 'static,
-    O: Send + Sync + 'static,
-{
+impl<I, O> InferenceWrapper<I, O> {
     fn new<T>(inference: T) -> Self
     where
-        T: Inference<Input = I, Output = O> + Send + Sync + 'static,
+        T: Inference<Input = I, Output = O> + 'static,
     {
         Self {
             inner: Box::new(inference),
@@ -167,9 +190,7 @@ where
 
 impl<T, I, O> From<T> for InferenceWrapper<I, O>
 where
-    T: Inference<Input = I, Output = O> + Send + Sync + 'static,
-    I: Send + 'static,
-    O: Send + Sync + 'static,
+    T: Inference<Input = I, Output = O> + 'static,
 {
     fn from(inference: T) -> Self {
         Self::new(inference)

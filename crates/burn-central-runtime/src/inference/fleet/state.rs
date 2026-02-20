@@ -14,3 +14,15 @@ pub struct FleetState {
     /// The json-encoded runtime configuration for the device, as last synced with the fleet management service.
     pub runtime_config: serde_json::Value,
 }
+
+impl Default for FleetState {
+    fn default() -> Self {
+        Self {
+            identity_key: String::new(),
+            fleet_id: String::new(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            active_model_version_id: String::new(),
+            runtime_config: serde_json::json!({}),
+        }
+    }
+}

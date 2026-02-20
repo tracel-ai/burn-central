@@ -8,6 +8,7 @@ mod state;
 
 pub type FleetRegistrationToken = String;
 pub type FleetDeviceToken = String;
+pub type FleetDeviceIdentityKey = String;
 
 pub type DeviceMetadata = serde_json::Value;
 
@@ -19,17 +20,30 @@ pub enum FleetError {
     CacheDirUnavailable,
 }
 
+pub struct FleetDeviceSession {
+    pub device_token: FleetDeviceToken,
+    pub state: state::FleetState,
+    pub client: Box<dyn FleetApi + Send + Sync>,
+}
+
 pub fn register(
     token: impl Into<FleetRegistrationToken>,
     metadata: DeviceMetadata,
-) -> anyhow::Result {
-    let root_dir = directories::BaseDirs::new()
-        .map(|dirs| dirs.data_local_dir().join("burn-fleet"))
-        .ok_or_else(|| {
-            FleetError::RegistrationFailed("failed to determine local data directory".into())
-        })?;
-    let fleet_device = ().into();
-    // let fleet_device = fleet::register_device(token.into()); --- IGNORE ---
+) -> anyhow::Result<FleetDeviceSession> {
+    let _root_dir = default_data_dir(&Env::Development)?;
+
+    let identity = FleetDeviceIdentityKey::default();
+
+    let client = NoopFleetApi;
+    let device = client.register_device(token.into(), identity, metadata)?;
+
+    let state = state::FleetState::default();
+
+    let fleet_device = FleetDeviceSession {
+        device_token: device.token,
+        state,
+        client: Box::new(client),
+    };
     Ok(fleet_device)
 }
 
@@ -58,13 +72,37 @@ pub struct SyncSnapshot {}
 pub trait FleetApi {
     fn register_device(
         &self,
-        token: FleetRegistrationToken,
+        reg_token: FleetRegistrationToken,
+        identity_key: FleetDeviceIdentityKey,
         metadata: DeviceMetadata,
     ) -> Result<RegisteredFleetDevice, FleetError>;
 
     fn sync(
         &self,
-        token: FleetDeviceToken,
+        device_token: FleetDeviceToken,
         metadata: Option<DeviceMetadata>,
     ) -> Result<SyncSnapshot, FleetError>;
+}
+
+pub struct NoopFleetApi;
+
+impl FleetApi for NoopFleetApi {
+    fn register_device(
+        &self,
+        _token: FleetRegistrationToken,
+        _identity_key: FleetDeviceIdentityKey,
+        _metadata: DeviceMetadata,
+    ) -> Result<RegisteredFleetDevice, FleetError> {
+        Ok(RegisteredFleetDevice {
+            token: "noop-token".to_string(),
+        })
+    }
+
+    fn sync(
+        &self,
+        _token: FleetDeviceToken,
+        _metadata: Option<DeviceMetadata>,
+    ) -> Result<SyncSnapshot, FleetError> {
+        Ok(SyncSnapshot {})
+    }
 }

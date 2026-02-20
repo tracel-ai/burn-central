@@ -1,4 +1,4 @@
-use crate::inference::{Inference, InferenceWriter};
+use crate::inference::{InferenceWriterObserver, InferenceWriterStats};
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 
@@ -161,6 +161,35 @@ pub fn telemetry() -> Arc<dyn Telemetry> {
     telemetry_store().read().unwrap().clone()
 }
 
+/// Writer observer that reports per-request telemetry on inference completion.
+pub struct InferenceWriterTelemetryObserver {
+    telemetry: Arc<dyn Telemetry>,
+    metadata: InferenceMetadata,
+}
+
+impl InferenceWriterTelemetryObserver {
+    pub fn new(metadata: InferenceMetadata) -> Self {
+        Self {
+            telemetry: telemetry(),
+            metadata,
+        }
+    }
+}
+
+impl InferenceWriterObserver for InferenceWriterTelemetryObserver {
+    fn on_finish(&self, stats: &InferenceWriterStats) {
+        self.telemetry.record_request(RequestTelemetry {
+            inference_name: self.metadata.inference_name.clone(),
+            model_name: self.metadata.model_name.clone(),
+            model_version: self.metadata.model_version.clone(),
+            duration: stats.duration,
+            outputs: stats.outputs,
+            errors: stats.errors,
+            cancelled: stats.cancelled,
+        });
+    }
+}
+
 /// Install an OpenTelemetry-backed global telemetry sink with a custom meter.
 pub fn set_otel_telemetry(meter: Meter) {
     set_telemetry(Arc::new(OTelTelemetry::new(meter)));
@@ -171,35 +200,35 @@ pub fn set_otel_telemetry_from_global_meter() {
     set_otel_telemetry(global::meter("burn-central-runtime.inference"));
 }
 
-/// Inference wrapper that opens a request span around the user inference call.
-pub struct InstrumentedInference<T> {
-    inner: T,
-    metadata: InferenceMetadata,
-}
+// /// Inference wrapper that opens a request span around the user inference call.
+// pub struct InstrumentedInference<T> {
+//     inner: T,
+//     metadata: InferenceMetadata,
+// }
 
-impl<T> InstrumentedInference<T> {
-    pub fn new(inner: T, metadata: InferenceMetadata) -> Self {
-        Self { inner, metadata }
-    }
-}
+// impl<T> InstrumentedInference<T> {
+//     pub fn new(inner: T, metadata: InferenceMetadata) -> Self {
+//         Self { inner, metadata }
+//     }
+// }
 
-impl<T> Inference for InstrumentedInference<T>
-where
-    T: Inference,
-{
-    type Input = T::Input;
-    type Output = T::Output;
+// impl<T> Inference for InstrumentedInference<T>
+// where
+//     T: Inference,
+// {
+//     type Input = T::Input;
+//     type Output = T::Output;
 
-    fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
-        let span = tracing::info_span!(
-            "inference",
-            inference.name = %self.metadata.inference_name,
-            model.name = %self.metadata.model_name,
-            model.version = %self.metadata.model_version,
-        );
+//     fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
+//         let span = tracing::info_span!(
+//             "inference",
+//             inference.name = %self.metadata.inference_name,
+//             model.name = %self.metadata.model_name,
+//             model.version = %self.metadata.model_version,
+//         );
 
-        let _guard = span.enter();
-        self.inner
-            .infer(input, writer.with_metadata(self.metadata.clone()));
-    }
-}
+//         let _guard = span.enter();
+//         self.inner
+//             .infer(input, writer.with_metadata(self.metadata.clone()));
+//     }
+// }
