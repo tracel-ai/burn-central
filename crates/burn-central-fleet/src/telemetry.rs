@@ -1,4 +1,4 @@
-use burn_central_inference::{InferenceWriterObserver, InferenceWriterStats};
+use burn_central_inference::observer::{InferenceWriterObserver, InferenceWriterStats};
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 

@@ -5,7 +5,9 @@ use arc_swap::ArcSwapOption;
 use burn::prelude::Backend;
 use burn_central_inference::{Inference, InferenceWriter};
 
-use crate::{FleetDeviceSession, InferenceMetadata, InferenceWriterTelemetryObserver, ModelSource};
+use crate::FleetDeviceSession;
+use crate::model::ModelSource;
+use crate::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetManagedInferenceError {

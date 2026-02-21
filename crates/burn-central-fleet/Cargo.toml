@@ -14,7 +14,6 @@ rust-version.workspace = true
 [dependencies]
 burn.workspace = true
 burn-central-client.workspace = true
-burn-central-core.workspace = true
 burn-central-inference.workspace = true
 burn-central-registry.workspace = true
 thiserror.workspace = true

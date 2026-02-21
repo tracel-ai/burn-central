@@ -391,7 +391,6 @@ dependencies = [
  "arc-swap",
  "burn",
  "burn-central-client",
- "burn-central-core",
  "burn-central-inference",
  "burn-central-registry",
  "chrono",

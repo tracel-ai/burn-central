@@ -1,12 +1,11 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 
 use burn_central_client::fleet::response::FleetModelDownloadResponse;
 use burn_central_registry::{ArtifactDownloadFile, download_artifacts_to_dir};
 use serde::{Deserialize, Serialize};
-
-use crate::ModelSource;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelCacheError {
@@ -22,6 +21,19 @@ pub enum ModelCacheError {
     MissingCachedFile(String),
     #[error(transparent)]
     Registry(#[from] burn_central_registry::RegistryError),
+}
+
+/// Source information for loading an assigned model.
+#[derive(Debug, Clone)]
+pub struct ModelSource {
+    pub root: PathBuf,
+    pub files: Vec<String>,
+}
+
+impl ModelSource {
+    pub fn new(root: PathBuf, files: Vec<String>) -> Self {
+        Self { root, files }
+    }
 }
 
 #[derive(Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-use crate::{InferenceWrapper, InferenceWriterChannel, InferenceWriterError};
+use crate::{InferenceWrapper, InferenceWriterChannel, writer::InferenceWriterError};
 
 use crossbeam::channel as cb;
 
