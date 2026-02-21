@@ -166,6 +166,7 @@ pub trait InferenceWriterChannel<O> {
     fn finish(&self, duration: std::time::Duration);
 }
 
+// TODO: maybe this should require send + sync
 pub trait Inference {
     type Input;
     type Output;
@@ -174,23 +175,31 @@ pub trait Inference {
 }
 
 pub struct InferenceWrapper<I, O> {
-    inner: Box<dyn Inference<Input = I, Output = O>>,
+    inner: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
+}
+
+impl<I, O> Clone for InferenceWrapper<I, O> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<I, O> InferenceWrapper<I, O> {
     fn new<T>(inference: T) -> Self
     where
-        T: Inference<Input = I, Output = O> + 'static,
+        T: Inference<Input = I, Output = O> + Send + Sync + 'static,
     {
         Self {
-            inner: Box::new(inference),
+            inner: Arc::new(inference),
         }
     }
 }
 
 impl<T, I, O> From<T> for InferenceWrapper<I, O>
 where
-    T: Inference<Input = I, Output = O> + 'static,
+    T: Inference<Input = I, Output = O> + Send + Sync + 'static,
 {
     fn from(inference: T) -> Self {
         Self::new(inference)

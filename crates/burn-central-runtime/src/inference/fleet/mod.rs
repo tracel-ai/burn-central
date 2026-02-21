@@ -34,38 +34,42 @@ pub struct FleetDeviceSession {
     client: FleetClient,
     fleet_key: String,
     store: state::FleetLocalStateStore,
-}
-
-pub fn register(
-    token: impl Into<FleetRegistrationToken>,
-    metadata: DeviceMetadata,
-    env: &Env,
-) -> anyhow::Result<FleetDeviceSession> {
-    let root_dir = default_data_dir(env)?;
-    let registration_token = token.into();
-    let fleet_key = state::fleet_key_from_registration_token(&registration_token);
-
-    let client = FleetClient::new(env_to_client_env(env));
-    let store = state::FleetLocalStateStore::new(root_dir);
-
-    let identity_key = store.load_or_create_machine_identity_key()?;
-    let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
-    let mut fleet_device = FleetDeviceSession::new(
-        registration_token,
-        identity_key,
-        state,
-        client,
-        fleet_key,
-        store,
-    );
-    if let Err(err) = fleet_device.sync(Some(metadata)) {
-        tracing::warn!(%err, "initial fleet sync failed, continuing with local cache");
-    }
-
-    Ok(fleet_device)
+    pending_bootstrap_metadata: Option<DeviceMetadata>,
 }
 
 impl FleetDeviceSession {
+    pub fn init(
+        token: impl Into<FleetRegistrationToken>,
+        metadata: DeviceMetadata,
+        env: &Env,
+    ) -> Result<Self, FleetError> {
+        let root_dir = default_data_dir(env)?;
+        let registration_token = token.into();
+        let fleet_key = state::fleet_key_from_registration_token(&registration_token);
+
+        tracing::info!(
+            fleet_key = %fleet_key,
+            "registering fleet device session with fleet management service"
+        );
+
+        let client = FleetClient::new(env_to_client_env(env));
+        let store = state::FleetLocalStateStore::new(root_dir);
+
+        let identity_key = store.load_or_create_machine_identity_key()?;
+        let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
+        let fleet_device = FleetDeviceSession::new(
+            registration_token,
+            identity_key,
+            state,
+            client,
+            fleet_key,
+            store,
+            Some(metadata),
+        );
+
+        Ok(fleet_device)
+    }
+
     fn new(
         registration_token: FleetRegistrationToken,
         identity_key: String,
@@ -73,6 +77,7 @@ impl FleetDeviceSession {
         client: FleetClient,
         fleet_key: String,
         store: state::FleetLocalStateStore,
+        pending_bootstrap_metadata: Option<DeviceMetadata>,
     ) -> Self {
         Self {
             registration_token,
@@ -81,6 +86,7 @@ impl FleetDeviceSession {
             client,
             fleet_key,
             store,
+            pending_bootstrap_metadata,
         }
     }
 
@@ -100,7 +106,18 @@ impl FleetDeviceSession {
         self.state.runtime_config()
     }
 
-    pub fn sync(&mut self, metadata: Option<DeviceMetadata>) -> Result<(), FleetError> {
+    pub fn sync_for_reconcile(&mut self) -> Result<(), FleetError> {
+        let metadata = self.pending_bootstrap_metadata.clone();
+        match self.sync(metadata) {
+            Ok(()) => {
+                self.pending_bootstrap_metadata = None;
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn sync(&mut self, metadata: Option<DeviceMetadata>) -> Result<(), FleetError> {
         tracing::info!(
             ?metadata,
             "syncing fleet device with fleet management service"

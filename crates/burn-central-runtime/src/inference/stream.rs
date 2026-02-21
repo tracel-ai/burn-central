@@ -1,4 +1,4 @@
-use crate::inference::{Inference, InferenceWriter, InferenceWriterChannel, InferenceWriterError};
+use crate::inference::{InferenceWrapper, InferenceWriterChannel, InferenceWriterError};
 
 use crossbeam::channel as cb;
 
@@ -91,7 +91,7 @@ impl<O> Drop for StreamingChannel<O> {
 }
 
 pub struct DirectInference<I, O> {
-    inner: Arc<dyn Inference<Input = I, Output = O> + Send + Sync>,
+    inner: InferenceWrapper<I, O>,
 }
 
 impl<I, O> DirectInference<I, O>
@@ -99,13 +99,8 @@ where
     I: Send + 'static,
     O: Send + Sync + 'static,
 {
-    pub fn new<T>(inference: T) -> Self
-    where
-        T: Inference<Input = I, Output = O> + Send + Sync + 'static,
-    {
-        Self {
-            inner: Arc::new(inference),
-        }
+    pub fn new(inference: InferenceWrapper<I, O>) -> Self {
+        Self { inner: inference }
     }
 
     pub fn stream(&self, input: I) -> InferenceStream<O> {
@@ -120,7 +115,7 @@ where
         let inference = self.inner.clone();
 
         let worker = thread::spawn(move || {
-            inference.infer(input, InferenceWriter::from_channel(channel));
+            inference.infer(input, channel);
         });
 
         InferenceStream {

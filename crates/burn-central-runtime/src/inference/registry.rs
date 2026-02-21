@@ -1,4 +1,4 @@
-use crate::inference::fleet::{self, FleetRegistrationToken};
+use crate::inference::fleet::{self, FleetDeviceSession, FleetRegistrationToken};
 use crate::inference::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
 use crate::inference::{ErasedInference, Inference, JsonInference};
 use crate::params::RoutineParam;
@@ -289,13 +289,6 @@ where
         name: "metadata serialization".to_string(),
         message: e.to_string(),
     })?;
-    let fleet_session =
-        fleet::register(token.into(), metadata, &Env::Development).map_err(|e| {
-            InferenceError::FactoryFailed {
-                name: "fleet registration".to_string(),
-                message: e.to_string(),
-            }
-        })?;
 
     let routine = IntoRoutine::into_routine(factory);
     let inference_name = routine.name().to_string();
@@ -319,12 +312,20 @@ where
             Ok(inference)
         });
 
-    let inference = FleetManagedInference::initialize(
-        inference_name,
-        fleet_session,
-        inference_factory,
-        device,
-    )?;
+    // extend the metadata with the inference name for better telemetry reporting in the fleet-managed inference wrapper
+    let metadata = serde_json::json!({
+        "name": inference_name,
+        "metadata": metadata,
+    });
+
+    let fleet_session = FleetDeviceSession::init(token.into(), metadata, &Env::Development)
+        .map_err(|e| InferenceError::FactoryFailed {
+            name: "fleet registration".to_string(),
+            message: e.to_string(),
+        })?;
+
+    let inference =
+        FleetManagedInference::init(inference_name, fleet_session, inference_factory, device)?;
 
     Ok(inference)
 }
@@ -351,7 +352,7 @@ where
     B: Backend,
     I: Inference + Send + Sync + 'static,
 {
-    pub fn initialize(
+    pub fn init(
         inference_name: impl Into<String>,
         fleet_session: fleet::FleetDeviceSession,
         factory: Box<dyn InferenceFactory<B, I>>,
@@ -365,7 +366,7 @@ where
             active: ArcSwapOption::empty(),
             reconcile_gate: Mutex::new(()),
             last_sync_at: Mutex::new(None),
-            sync_interval: Duration::from_secs(30),
+            sync_interval: Duration::from_secs(10),
         };
         inference.ensure_ready()?;
         Ok(inference)
@@ -384,7 +385,7 @@ where
         let (fleet_version, model_source, config) = {
             let mut session = self.fleet_session.write().unwrap();
 
-            match session.sync(None) {
+            match session.sync_for_reconcile() {
                 Ok(()) => {
                     let fleet_version = normalized_model_version(session.active_model_version_id());
                     let model_source =
@@ -436,6 +437,10 @@ where
 
         let active = self.active();
         if active.as_ref().map(|a| &a.model_version) == Some(&fleet_version) {
+            tracing::info!(
+                version = &fleet_version,
+                "fleet model version is same as active, skipping rollout"
+            );
             return Ok(());
         }
 
@@ -448,7 +453,7 @@ where
 
         self.active.store(Some(Arc::new(ActiveInference {
             inference: built,
-            model_version: fleet_version.clone(),
+            model_version: fleet_version,
         })));
 
         Ok(())

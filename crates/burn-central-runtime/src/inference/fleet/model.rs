@@ -113,11 +113,29 @@ pub fn load_cached_model_source(
     model_version_id: &str,
 ) -> Result<ModelSource, ModelCacheError> {
     if model_version_id.is_empty() {
+        tracing::error!("model version id is empty in fleet state");
         return Err(ModelCacheError::MissingActiveModelVersion);
     }
 
+    tracing::info!(
+        root = %models_root.display(),
+        version = model_version_id,
+        "reading model source metadata for model version"
+    );
+
     let model_root = models_root.join(model_version_id);
     let manifest_path = model_root.join("manifest.json");
+
+    if !manifest_path.exists() {
+        tracing::error!(
+            path = %manifest_path.display(),
+            "cached model manifest not found for active model version"
+        );
+        return Err(ModelCacheError::MissingCachedFile(
+            manifest_path.display().to_string(),
+        ));
+    }
+
     let bytes = fs::read(&manifest_path)?;
     let manifest: ModelDownloadManifest = serde_json::from_slice(&bytes)?;
 

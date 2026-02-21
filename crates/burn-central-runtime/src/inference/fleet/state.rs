@@ -56,7 +56,6 @@ pub enum FleetStateStoreError {
     Json(#[from] serde_json::Error),
 }
 
-/// Minimal file-backed local state store for runtime fleet bootstrap.
 pub struct FleetLocalStateStore {
     root_dir: PathBuf,
 }
