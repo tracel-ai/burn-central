@@ -74,7 +74,7 @@ where
     T: Serialize,
 {
     fn from(value: T) -> Self {
-        let json = serde_json::to_value(value).unwrap_or_else(|_| serde_json::Value::Null);
+        let json = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
         Self::new(Some(json))
     }
 }
@@ -211,6 +211,12 @@ where
 /// Registry of inference factories keyed by name.
 pub struct InferenceRegistry<B: Backend> {
     factories: HashMap<String, Box<dyn ErasedFactory<B>>>,
+}
+
+impl<B: Backend> Default for InferenceRegistry<B> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<B: Backend> InferenceRegistry<B> {

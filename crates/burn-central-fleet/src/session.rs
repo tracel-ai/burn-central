@@ -74,13 +74,13 @@ impl FleetDeviceSession {
     }
 
     pub fn active_model_version_id(&self) -> &str {
-        &self.state.active_model_version_id()
+        self.state.active_model_version_id()
     }
 
     pub fn model_source(&self) -> Result<ModelSource, FleetError> {
         model::load_cached_model_source(
             &self.store.models_dir(&self.fleet_key),
-            &self.state.active_model_version_id(),
+            self.state.active_model_version_id(),
         )
         .map_err(FleetError::from)
     }

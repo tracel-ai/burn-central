@@ -10,8 +10,9 @@ use crate::manifest::{ModelManifest, load_manifest, manifest_map, parse_manifest
 use crate::registry::Registry;
 
 /// Selector for which model version to load.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum ModelVersionSelector {
+    #[default]
     Latest,
     Version(u64),
 }
@@ -28,12 +29,6 @@ impl From<u32> for ModelVersionSelector {
 impl From<u64> for ModelVersionSelector {
     fn from(value: u64) -> Self {
         ModelVersionSelector::Version(value)
-    }
-}
-
-impl Default for ModelVersionSelector {
-    fn default() -> Self {
-        ModelVersionSelector::Latest
     }
 }
 
@@ -141,7 +136,7 @@ impl ModelHandle {
             }
             ModelVersionSelector::Version(v) => v,
         };
-        let version_dir = self.model.version_dir(&self.registry.cache_dir(), version);
+        let version_dir = self.model.version_dir(self.registry.cache_dir(), version);
 
         if let Ok(manifest) = load_manifest(&version_dir) {
             if cache_is_valid(&version_dir, &manifest, true)? {

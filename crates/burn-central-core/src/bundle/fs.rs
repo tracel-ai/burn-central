@@ -195,7 +195,7 @@ fn sanitize_rel_path(path: &str) -> Result<String, String> {
 fn temp_path(dest: &Path) -> Result<PathBuf, std::io::Error> {
     let file_name = dest
         .file_name()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Missing file name"))?
+        .ok_or_else(|| std::io::Error::other("Missing file name"))?
         .to_string_lossy();
     Ok(dest.with_file_name(format!(".{file_name}.partial")))
 }
