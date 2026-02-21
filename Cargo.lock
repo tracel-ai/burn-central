@@ -343,6 +343,8 @@ name = "burn-central"
 version = "0.5.0"
 dependencies = [
  "burn-central-core",
+ "burn-central-fleet",
+ "burn-central-inference",
  "burn-central-macros",
  "burn-central-registry",
  "burn-central-runtime",
@@ -383,6 +385,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-central-fleet"
+version = "0.5.0"
+dependencies = [
+ "arc-swap",
+ "burn",
+ "burn-central-client",
+ "burn-central-core",
+ "burn-central-inference",
+ "burn-central-registry",
+ "chrono",
+ "directories",
+ "opentelemetry",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "burn-central-inference"
+version = "0.5.0"
+dependencies = [
+ "crossbeam",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "burn-central-macros"
 version = "0.5.0"
 dependencies = [
@@ -414,22 +446,16 @@ name = "burn-central-runtime"
 version = "0.5.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "burn",
- "burn-central-client",
  "burn-central-core",
- "burn-central-registry",
- "chrono",
+ "burn-central-fleet",
+ "burn-central-inference",
  "clap",
- "crossbeam",
  "derive_more",
- "directories",
  "json-patch",
  "log",
- "opentelemetry",
  "serde",
  "serde_json",
- "sha2",
  "strum",
  "syn",
  "thiserror 2.0.18",

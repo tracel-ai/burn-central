@@ -16,3 +16,5 @@ burn-central-core.workspace = true
 burn-central-macros.workspace = true
 burn-central-runtime.workspace = true
 burn-central-registry.workspace = true
+burn-central-inference.workspace = true
+burn-central-fleet.workspace = true

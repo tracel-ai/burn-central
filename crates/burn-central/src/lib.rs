@@ -57,6 +57,14 @@ pub use burn_central_macros as macros;
 #[doc(inline)]
 pub use burn_central_runtime as runtime;
 
+/// Inference contracts and adapters.
+#[doc(inline)]
+pub use burn_central_inference as inference;
+
+/// On-device fleet synchronization helpers.
+#[doc(inline)]
+pub use burn_central_fleet as fleet;
+
 /// Local registry/cache helpers for downloading models.
 #[doc(inline)]
 pub use burn_central_registry as registry;

@@ -1,11 +1,11 @@
-use crate::inference::{InferenceWriterObserver, InferenceWriterStats};
+use burn_central_inference::{InferenceWriterObserver, InferenceWriterStats};
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
-/// Runtime-owned facts about a completed inference request.
+/// Fleet-owned facts about a completed inference request.
 #[derive(Debug, Clone)]
 pub struct RequestTelemetry {
     pub inference_name: String,
@@ -17,7 +17,7 @@ pub struct RequestTelemetry {
     pub cancelled: bool,
 }
 
-/// Runtime metadata attached to each inference request.
+/// Fleet metadata attached to each inference request.
 #[derive(Debug, Clone)]
 pub struct InferenceMetadata {
     pub inference_name: String,
@@ -199,36 +199,3 @@ pub fn set_otel_telemetry(meter: Meter) {
 pub fn set_otel_telemetry_from_global_meter() {
     set_otel_telemetry(global::meter("burn-central-runtime.inference"));
 }
-
-// /// Inference wrapper that opens a request span around the user inference call.
-// pub struct InstrumentedInference<T> {
-//     inner: T,
-//     metadata: InferenceMetadata,
-// }
-
-// impl<T> InstrumentedInference<T> {
-//     pub fn new(inner: T, metadata: InferenceMetadata) -> Self {
-//         Self { inner, metadata }
-//     }
-// }
-
-// impl<T> Inference for InstrumentedInference<T>
-// where
-//     T: Inference,
-// {
-//     type Input = T::Input;
-//     type Output = T::Output;
-
-//     fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
-//         let span = tracing::info_span!(
-//             "inference",
-//             inference.name = %self.metadata.inference_name,
-//             model.name = %self.metadata.model_name,
-//             model.version = %self.metadata.model_version,
-//         );
-
-//         let _guard = span.enter();
-//         self.inner
-//             .infer(input, writer.with_metadata(self.metadata.clone()));
-//     }
-// }

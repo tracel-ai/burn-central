@@ -1,0 +1,28 @@
+[package]
+name = "burn-central-fleet"
+authors.workspace = true
+categories.workspace = true
+description = "On-device fleet synchronization and model cache for Burn Central SDK."
+keywords.workspace = true
+repository.workspace = true
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+burn.workspace = true
+burn-central-client.workspace = true
+burn-central-core.workspace = true
+burn-central-inference.workspace = true
+burn-central-registry.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+opentelemetry.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+directories = "6.0.0"
+arc-swap = "1.7.1"

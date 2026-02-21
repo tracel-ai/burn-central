@@ -1,4 +1,4 @@
-use crate::inference::{Inference, InferenceWriter, InferenceWriterChannel, InferenceWriterError};
+use crate::{Inference, InferenceWriter, InferenceWriterChannel, InferenceWriterError};
 use serde::{Serialize, de::DeserializeOwned};
 use std::error::Error;
 use std::fmt;

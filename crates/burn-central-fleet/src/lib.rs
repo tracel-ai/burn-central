@@ -2,16 +2,42 @@ use std::path::PathBuf;
 
 use burn_central_client::fleet::FleetClient;
 use burn_central_core::Env;
+use burn_central_core::bundle::{BundleDecode, FsBundleReader};
 use directories::{BaseDirs, ProjectDirs};
 
-use crate::inference::ModelSource;
-
+mod inference;
 mod model;
 mod state;
+mod telemetry;
+
+pub use inference::{FleetManagedFactory, FleetManagedInference, FleetManagedInferenceError};
+pub use telemetry::{
+    InferenceMetadata, InferenceWriterTelemetryObserver, NoopTelemetry, OTelTelemetry,
+    RequestTelemetry, Telemetry, set_otel_telemetry, set_otel_telemetry_from_global_meter,
+    set_telemetry, telemetry,
+};
 
 pub type FleetRegistrationToken = String;
 
 pub type DeviceMetadata = serde_json::Value;
+
+/// Source information for loading an assigned model.
+#[derive(Debug, Clone)]
+pub struct ModelSource {
+    root: PathBuf,
+    files: Vec<String>,
+}
+
+impl ModelSource {
+    pub fn new(root: PathBuf, files: Vec<String>) -> Self {
+        Self { root, files }
+    }
+
+    pub fn load<D: BundleDecode>(&self, settings: &D::Settings) -> Result<D, D::Error> {
+        let reader = FsBundleReader::new(self.root.clone(), self.files.clone());
+        D::decode(&reader, settings)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetError {

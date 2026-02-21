@@ -1,20 +1,19 @@
-use crate::inference::fleet::{self, FleetDeviceSession, FleetRegistrationToken};
-use crate::inference::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
-use crate::inference::{ErasedInference, Inference, JsonInference};
 use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine, Routine};
 use crate::{Args, MultiDevice};
-use arc_swap::ArcSwapOption;
 use burn::prelude::Backend;
 use burn_central_core::Env;
-use burn_central_core::bundle::{BundleDecode, FsBundleReader};
+use burn_central_core::bundle::BundleDecode;
+use burn_central_fleet::{
+    FleetDeviceSession, FleetManagedFactory, FleetManagedInference, FleetRegistrationToken,
+};
+use burn_central_inference::{ErasedInference, Inference, JsonInference};
+use derive_more::{Deref, From};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
@@ -24,25 +23,17 @@ pub enum InferenceError {
     FactoryFailed { name: String, message: String },
 }
 
-/// Source information for loading the model that was assigned to an inference
-/// This is passed to inference factories to load the model artifacts needed for inference.
-/// The actual loading logic is implemented in `ModelSource::load` which uses the [`BundleDecode`] trait to support flexible model formats.
-#[derive(Debug, Clone)]
-pub struct ModelSource {
-    root: PathBuf,
-    files: Vec<String>,
-}
+/// Runtime wrapper around fleet model sources to support routine param injection.
+#[derive(Debug, Clone, Deref, From)]
+pub struct ModelSource(pub burn_central_fleet::ModelSource);
 
 impl ModelSource {
     pub fn new(root: PathBuf, files: Vec<String>) -> Self {
-        Self { root, files }
+        Self(burn_central_fleet::ModelSource::new(root, files))
     }
-}
 
-impl ModelSource {
     pub fn load<D: BundleDecode>(&self, settings: &D::Settings) -> Result<D, D::Error> {
-        let reader = FsBundleReader::new(self.root.clone(), self.files.clone());
-        D::decode(&reader, settings)
+        self.0.load(settings)
     }
 }
 
@@ -214,8 +205,6 @@ where
                     name: self.name.clone(),
                     message,
                 })?;
-        // let metadata = InferenceMetadata::new(self.name.clone(), "unknown", "unknown");
-        // let inference = InstrumentedInference::new(inference, metadata);
 
         Ok(Box::new(JsonInference::new(inference)))
     }
@@ -294,25 +283,27 @@ where
     let inference_name = routine.name().to_string();
     let error_name = inference_name.clone();
 
-    let inference_factory: Box<dyn InferenceFactory<B, I::Inference>> =
-        Box::new(move |ctx: &mut InferenceContext<B>| {
-            let factory_output =
-                routine
-                    .run((), ctx)
-                    .map_err(|err| InferenceError::FactoryFailed {
-                        name: error_name.clone(),
-                        message: err.to_string(),
-                    })?;
-            let inference = factory_output.into_inference().map_err(|message| {
-                InferenceError::FactoryFailed {
-                    name: error_name.clone(),
-                    message,
-                }
-            })?;
-            Ok(inference)
-        });
+    let inference_factory: Box<dyn FleetManagedFactory<B, I::Inference>> = Box::new(
+        move |model_source: burn_central_fleet::ModelSource,
+              runtime_config: serde_json::Value,
+              device: B::Device| {
+            let init = InferenceInit {
+                model: ModelSource::from(model_source),
+                device,
+            };
+            let mut ctx = InferenceContext::new(init, InferenceArgs::new(Some(runtime_config)));
 
-    // extend the metadata with the inference name for better telemetry reporting in the fleet-managed inference wrapper
+            let factory_output = routine.run((), &mut ctx).map_err(|err| {
+                format!("inference handler '{error_name}' failed to initialize: {err}")
+            })?;
+
+            factory_output.into_inference().map_err(|message| {
+                format!("inference handler '{error_name}' failed to initialize: {message}")
+            })
+        },
+    );
+
+    // Extend metadata with the inference name for better telemetry reporting.
     let metadata = serde_json::json!({
         "name": inference_name,
         "metadata": metadata,
@@ -324,224 +315,16 @@ where
             message: e.to_string(),
         })?;
 
-    let inference =
-        FleetManagedInference::init(inference_name, fleet_session, inference_factory, device)?;
+    let inference = FleetManagedInference::init(
+        inference_name.clone(),
+        fleet_session,
+        inference_factory,
+        device,
+    )
+    .map_err(|e| InferenceError::FactoryFailed {
+        name: inference_name,
+        message: e.to_string(),
+    })?;
 
     Ok(inference)
-}
-
-struct ActiveInference<I> {
-    inference: I,
-    model_version: String,
-}
-
-/// Inference wrapper that bootstraps burn-central features like fleet registration and telemetry on top of a typed inference implementation.
-pub struct FleetManagedInference<B: Backend, I> {
-    inference_name: String,
-    fleet_session: RwLock<fleet::FleetDeviceSession>,
-    factory: Box<dyn InferenceFactory<B, I>>,
-    device: B::Device,
-    active: ArcSwapOption<ActiveInference<I>>,
-    reconcile_gate: Mutex<()>,
-    last_sync_at: Mutex<Option<Instant>>,
-    sync_interval: Duration,
-}
-
-impl<B, I> FleetManagedInference<B, I>
-where
-    B: Backend,
-    I: Inference + Send + Sync + 'static,
-{
-    pub fn init(
-        inference_name: impl Into<String>,
-        fleet_session: fleet::FleetDeviceSession,
-        factory: Box<dyn InferenceFactory<B, I>>,
-        device: B::Device,
-    ) -> Result<Self, InferenceError> {
-        let inference = Self {
-            inference_name: inference_name.into(),
-            fleet_session: RwLock::new(fleet_session),
-            factory,
-            device,
-            active: ArcSwapOption::empty(),
-            reconcile_gate: Mutex::new(()),
-            last_sync_at: Mutex::new(None),
-            sync_interval: Duration::from_secs(10),
-        };
-        inference.ensure_ready()?;
-        Ok(inference)
-    }
-
-    fn maybe_sync_and_rollout(&self) -> Result<(), InferenceError> {
-        if self.active().is_some() && !self.should_sync_now() {
-            return Ok(());
-        }
-
-        let _guard = self.reconcile_gate.lock().unwrap();
-        if self.active().is_some() && !self.should_sync_now() {
-            return Ok(());
-        }
-
-        let (fleet_version, model_source, config) = {
-            let mut session = self.fleet_session.write().unwrap();
-
-            match session.sync_for_reconcile() {
-                Ok(()) => {
-                    let fleet_version = normalized_model_version(session.active_model_version_id());
-                    let model_source =
-                        session
-                            .model_source()
-                            .map_err(|err| InferenceError::FactoryFailed {
-                                name: self.inference_name.clone(),
-                                message: format!("fleet model source failed: {err}"),
-                            })?;
-
-                    let config = session.runtime_config();
-
-                    (fleet_version, model_source, config.clone())
-                }
-                Err(sync_err) => {
-                    self.mark_sync_now();
-
-                    if self.active().is_some() {
-                        tracing::warn!(
-                            err = %sync_err,
-                            "fleet sync failed, keeping current active model"
-                        );
-                        return Ok(());
-                    }
-
-                    tracing::warn!(
-                        err = %sync_err,
-                         "fleet sync failed and no active model, trying local cache"
-                    );
-
-                    let fleet_version = normalized_model_version(session.active_model_version_id());
-                    let model_source =
-                        session
-                            .model_source()
-                            .map_err(|cache_err| InferenceError::FactoryFailed {
-                                name: self.inference_name.clone(),
-                                message: format!(
-                                    "fleet sync failed and no usable local cache: sync={sync_err}; cache={cache_err}"
-                                ),
-                            })?;
-                    let config = session.runtime_config();
-
-                    (fleet_version, model_source, config.clone())
-                }
-            }
-        };
-
-        self.mark_sync_now();
-
-        let active = self.active();
-        if active.as_ref().map(|a| &a.model_version) == Some(&fleet_version) {
-            tracing::info!(
-                version = &fleet_version,
-                "fleet model version is same as active, skipping rollout"
-            );
-            return Ok(());
-        }
-
-        let init = InferenceInit {
-            model: model_source,
-            device: self.device.clone(),
-        };
-        let mut ctx = InferenceContext::new(init, InferenceArgs::new(Some(config)));
-        let built = self.factory.build(&mut ctx)?;
-
-        self.active.store(Some(Arc::new(ActiveInference {
-            inference: built,
-            model_version: fleet_version,
-        })));
-
-        Ok(())
-    }
-
-    fn ensure_ready(&self) -> Result<(), InferenceError> {
-        self.maybe_sync_and_rollout()?;
-        if self.active().is_none() {
-            return Err(InferenceError::FactoryFailed {
-                name: self.inference_name.clone(),
-                message: "no active model after bootstrap".to_string(),
-            });
-        }
-        Ok(())
-    }
-
-    fn should_sync_now(&self) -> bool {
-        let last_sync_at = self.last_sync_at.lock().unwrap();
-        match *last_sync_at {
-            Some(instant) => instant.elapsed() >= self.sync_interval,
-            None => true,
-        }
-    }
-
-    fn mark_sync_now(&self) {
-        let mut last_sync_at = self.last_sync_at.lock().unwrap();
-        *last_sync_at = Some(Instant::now());
-    }
-
-    fn active(&self) -> Option<Arc<ActiveInference<I>>> {
-        self.active.load_full()
-    }
-}
-
-impl<B, I> Inference for FleetManagedInference<B, I>
-where
-    B: Backend,
-    I: Inference + Send + Sync + 'static,
-{
-    type Input = <I as Inference>::Input;
-    type Output = <I as Inference>::Output;
-
-    fn infer(&self, input: Self::Input, writer: super::InferenceWriter<Self::Output>) {
-        if let Err(err) = self.maybe_sync_and_rollout() {
-            writer.error(Box::new(err)).ok();
-            return;
-        }
-
-        let Some(active) = self.active() else {
-            writer
-                .error(Box::new(InferenceError::FactoryFailed {
-                    name: self.inference_name.clone(),
-                    message: "no active model".to_string(),
-                }))
-                .ok();
-            return;
-        };
-
-        let metadata = InferenceMetadata::new(
-            self.inference_name.clone(),
-            "unknown".to_string(),
-            active.model_version.clone(),
-        );
-
-        let writer =
-            writer.with_observer(Arc::new(InferenceWriterTelemetryObserver::new(metadata)));
-        active.inference.infer(input, writer)
-    }
-}
-
-pub trait InferenceFactory<B: Backend, I>: Send + Sync {
-    fn build(&self, ctx: &mut InferenceContext<B>) -> Result<I, InferenceError>;
-}
-
-impl<F, B, I> InferenceFactory<B, I> for F
-where
-    F: Fn(&mut InferenceContext<B>) -> Result<I, InferenceError> + Send + Sync,
-    B: Backend,
-{
-    fn build(&self, ctx: &mut InferenceContext<B>) -> Result<I, InferenceError> {
-        self(ctx)
-    }
-}
-
-fn normalized_model_version(version: &str) -> String {
-    if version.is_empty() {
-        "unknown".to_string()
-    } else {
-        version.to_string()
-    }
 }

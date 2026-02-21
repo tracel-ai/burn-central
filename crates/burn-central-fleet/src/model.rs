@@ -6,7 +6,7 @@ use burn_central_client::fleet::response::FleetModelDownloadResponse;
 use burn_central_registry::{ArtifactDownloadFile, download_artifacts_to_dir};
 use serde::{Deserialize, Serialize};
 
-use crate::inference::ModelSource;
+use crate::ModelSource;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelCacheError {

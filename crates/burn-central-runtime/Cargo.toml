@@ -14,7 +14,8 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 burn-central-core.workspace = true
-burn-central-registry.workspace = true
+burn-central-fleet.workspace = true
+burn-central-inference.workspace = true
 burn.workspace = true
 thiserror.workspace = true
 variadics_please.workspace = true
@@ -25,19 +26,10 @@ tynm.workspace = true
 derive_more.workspace = true
 clap.workspace = true
 log.workspace = true
-crossbeam.workspace = true
 serde.workspace = true
 json-patch.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-opentelemetry.workspace = true
-
-# Inference
-directories = "6.0.0"
-chrono = "0.4.43"
-arc-swap = "1.7.1"
-sha2.workspace = true
-burn-central-client.workspace = true
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }
