@@ -52,7 +52,7 @@ impl FleetDeviceSession {
             "registering fleet device session with fleet management service"
         );
 
-        let client = FleetClient::new(env_to_client_env(env));
+        let client = FleetClient::new(env.clone());
         let store = state::FleetLocalStateStore::new(root_dir);
 
         let identity_key = store.load_or_create_machine_identity_key()?;
@@ -169,12 +169,4 @@ fn default_data_dir(env: &Env) -> Result<PathBuf, FleetError> {
         return Ok(base.data_dir().join("burn-central").join(fleets_subdir));
     }
     Err(FleetError::CacheDirUnavailable)
-}
-
-fn env_to_client_env(env: &Env) -> burn_central_client::Env {
-    match env {
-        Env::Production => burn_central_client::Env::Production,
-        Env::Staging(v) => burn_central_client::Env::Staging(*v),
-        Env::Development => burn_central_client::Env::Development,
-    }
 }
