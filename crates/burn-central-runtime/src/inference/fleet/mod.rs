@@ -10,14 +10,11 @@ mod model;
 mod state;
 
 pub type FleetRegistrationToken = String;
-pub type FleetDeviceToken = String;
 
 pub type DeviceMetadata = serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetError {
-    #[error("fleet registration failed: {0}")]
-    RegistrationFailed(String),
     #[error("fleet sync failed: {0}")]
     SyncFailed(String),
     #[error("fleet model download failed: {0}")]
@@ -31,7 +28,8 @@ pub enum FleetError {
 }
 
 pub struct FleetDeviceSession {
-    device_token: FleetDeviceToken,
+    registration_token: FleetRegistrationToken,
+    identity_key: String,
     state: state::FleetState,
     client: FleetClient,
     fleet_key: String,
@@ -52,32 +50,33 @@ pub fn register(
 
     let identity_key = store.load_or_create_machine_identity_key()?;
     let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
-    // Register is expected to be idempotent server-side based on registration token + stable identity.
-    let registered = client
-        .register_device(
-            registration_token,
-            identity_key.clone(),
-            Some(metadata.clone()),
-        )
-        .map_err(|e| FleetError::RegistrationFailed(e.to_string()))?;
-
-    let mut fleet_device =
-        FleetDeviceSession::new(registered.token, state, client, fleet_key, store);
-    fleet_device.sync(Some(metadata))?;
+    let mut fleet_device = FleetDeviceSession::new(
+        registration_token,
+        identity_key,
+        state,
+        client,
+        fleet_key,
+        store,
+    );
+    if let Err(err) = fleet_device.sync(Some(metadata)) {
+        tracing::warn!(%err, "initial fleet sync failed, continuing with local cache");
+    }
 
     Ok(fleet_device)
 }
 
 impl FleetDeviceSession {
     fn new(
-        device_token: FleetDeviceToken,
+        registration_token: FleetRegistrationToken,
+        identity_key: String,
         state: state::FleetState,
         client: FleetClient,
         fleet_key: String,
         store: state::FleetLocalStateStore,
     ) -> Self {
         Self {
-            device_token,
+            registration_token,
+            identity_key,
             state,
             client,
             fleet_key,
@@ -102,15 +101,22 @@ impl FleetDeviceSession {
     }
 
     pub fn sync(&mut self, metadata: Option<DeviceMetadata>) -> Result<(), FleetError> {
-        tracing::info!("syncing fleet device with fleet management service");
+        tracing::info!(
+            ?metadata,
+            "syncing fleet device with fleet management service"
+        );
         let snapshot = self
             .client
-            .sync(self.device_token.clone(), metadata)
+            .sync(
+                self.registration_token.clone(),
+                self.identity_key.clone(),
+                metadata,
+            )
             .map_err(|e| FleetError::SyncFailed(e.to_string()))?;
 
         let download = self
             .client
-            .model_download(self.device_token.clone())
+            .model_download(self.registration_token.clone(), self.identity_key.clone())
             .map_err(|e| FleetError::DownloadFailed(e.to_string()))?;
 
         model::ensure_cached_model(

@@ -384,32 +384,52 @@ where
         let (fleet_version, model_source, config) = {
             let mut session = self.fleet_session.write().unwrap();
 
-            if let Err(err) = session.sync(None) {
-                self.mark_sync_now();
+            match session.sync(None) {
+                Ok(()) => {
+                    let fleet_version = normalized_model_version(session.active_model_version_id());
+                    let model_source =
+                        session
+                            .model_source()
+                            .map_err(|err| InferenceError::FactoryFailed {
+                                name: self.inference_name.clone(),
+                                message: format!("fleet model source failed: {err}"),
+                            })?;
 
-                if self.active().is_some() {
-                    tracing::warn!("fleet sync failed, keeping current active model: {err}");
-                    return Ok(());
+                    let config = session.runtime_config();
+
+                    (fleet_version, model_source, config.clone())
                 }
+                Err(sync_err) => {
+                    self.mark_sync_now();
 
-                return Err(InferenceError::FactoryFailed {
-                    name: self.inference_name.clone(),
-                    message: format!("fleet sync failed: {err}"),
-                });
+                    if self.active().is_some() {
+                        tracing::warn!(
+                            err = %sync_err,
+                            "fleet sync failed, keeping current active model"
+                        );
+                        return Ok(());
+                    }
+
+                    tracing::warn!(
+                        err = %sync_err,
+                         "fleet sync failed and no active model, trying local cache"
+                    );
+
+                    let fleet_version = normalized_model_version(session.active_model_version_id());
+                    let model_source =
+                        session
+                            .model_source()
+                            .map_err(|cache_err| InferenceError::FactoryFailed {
+                                name: self.inference_name.clone(),
+                                message: format!(
+                                    "fleet sync failed and no usable local cache: sync={sync_err}; cache={cache_err}"
+                                ),
+                            })?;
+                    let config = session.runtime_config();
+
+                    (fleet_version, model_source, config.clone())
+                }
             }
-
-            let fleet_version = normalized_model_version(session.active_model_version_id());
-            let model_source =
-                session
-                    .model_source()
-                    .map_err(|err| InferenceError::FactoryFailed {
-                        name: self.inference_name.clone(),
-                        message: format!("fleet model source failed: {err}"),
-                    })?;
-
-            let config = session.runtime_config();
-
-            (fleet_version, model_source, config.clone())
         };
 
         self.mark_sync_now();
