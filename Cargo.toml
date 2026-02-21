@@ -18,13 +18,13 @@ keywords = ["tracel", "burn-central", "burn", "sdk"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-burn = { version = "0.20.0", default-features = false,  features = ["train"] }
+burn = { version = "0.20.0", default-features = false, features = ["train"] }
 
 url = "2.5.8"
 anyhow = "1.0.101"
 clap = { version = "4.5", features = ["derive"] }
 derive-new = { version = "0.7.0", default-features = false }
-log = {version = "0.4.27",features = ["std"] }
+log = { version = "0.4.27", features = ["std"] }
 proc-macro2 = "1.0.106"
 quote = "1.0.44"
 serde = { version = "1.0.228", default-features = false, features = [
@@ -49,7 +49,7 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "from",
     "display",
     "unwrap",
-]}
+] }
 chrono = "0.4.43"
 tracing = "0.1.44"
 tracing-core = "0.1.36"
@@ -57,8 +57,8 @@ tracing-subscriber = "0.3.22"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
-# burn-central-client = { version = "0.4.0", path = "../client/burn-central-client" }
-burn-central-client = "0.4.0"
+burn-central-client = { version = "0.5.0", path = "../burn-central-client/burn-central-client" }
+# burn-central-client = "0.5.0"
 
 burn-central-registry = { path = "crates/burn-central-registry", version = "0.5.0" }
 
@@ -72,3 +72,6 @@ tracel-xtask = "4.5.0"
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.
+
+[patch.crates-io]
+burn-central-client = { path = "../burn-central-client/burn-central-client" }

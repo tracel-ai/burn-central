@@ -26,6 +26,7 @@
 //! # }
 //! ```
 
+mod artifact_download;
 mod builder;
 mod cache;
 mod diagnostics;
@@ -36,6 +37,7 @@ mod model;
 mod registry;
 
 // Public API exports
+pub use artifact_download::{ArtifactDownloadFile, download_artifacts_to_dir};
 pub use builder::RegistryBuilder;
 pub use diagnostics::CacheDiagnostics;
 pub use error::RegistryError;

@@ -36,6 +36,8 @@ opentelemetry.workspace = true
 directories = "6.0.0"
 chrono = "0.4.43"
 arc-swap = "1.7.1"
+sha2.workspace = true
+burn-central-client.workspace = true
 
 [dev-dependencies]
 burn = { workspace = true, features = ["ndarray"] }

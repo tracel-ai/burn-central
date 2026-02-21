@@ -1,1 +1,199 @@
-//! TODO: implement model downloading and caching logic, and the logic for determining which model version to load based on the fleet state.
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use burn_central_client::fleet::response::FleetModelDownloadResponse;
+use burn_central_registry::{ArtifactDownloadFile, download_artifacts_to_dir};
+use serde::{Deserialize, Serialize};
+
+use crate::inference::ModelSource;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ModelCacheError {
+    #[error("failed to access model cache filesystem: {0}")]
+    Io(#[from] io::Error),
+    #[error("failed to serialize model cache metadata: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("model version mismatch between sync ({expected}) and download ({actual})")]
+    ModelVersionMismatch { expected: String, actual: String },
+    #[error("no active model version in fleet state")]
+    MissingActiveModelVersion,
+    #[error("cached model file missing: {0}")]
+    MissingCachedFile(String),
+    #[error(transparent)]
+    Registry(#[from] burn_central_registry::RegistryError),
+}
+
+#[derive(Serialize, Deserialize)]
+struct ModelDownloadManifest {
+    model_version_id: String,
+    files: Vec<ModelDownloadManifestFile>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ModelDownloadManifestFile {
+    rel_path: String,
+    size_bytes: u64,
+    checksum: String,
+}
+
+/// Ensure the model files from a download response are cached in the local filesystem, validating paths and content.
+pub fn ensure_cached_model(
+    models_root: &Path,
+    expected_model_version_id: &str,
+    download: &FleetModelDownloadResponse,
+) -> Result<(), ModelCacheError> {
+    if download.model_version_id != expected_model_version_id {
+        tracing::error!(
+            expected = expected_model_version_id,
+            actual = download.model_version_id,
+            "model version mismatch between sync and download"
+        );
+        return Err(ModelCacheError::ModelVersionMismatch {
+            expected: expected_model_version_id.to_string(),
+            actual: download.model_version_id.clone(),
+        });
+    }
+
+    let model_root = models_root.join(&download.model_version_id);
+
+    let manifest_path = model_root.join("manifest.json");
+    if manifest_path.exists() {
+        let bytes = fs::read(&manifest_path)?;
+        let manifest: ModelDownloadManifest = serde_json::from_slice(&bytes)?;
+
+        // If the manifest matches the download response, we can skip validating files and re-downloading.
+        if manifest.model_version_id == download.model_version_id {
+            tracing::info!(
+                version = %download.model_version_id,
+                "cached model manifest matches download response, skipping cache update"
+            );
+            return Ok(());
+        }
+    }
+
+    let mut files = Vec::with_capacity(download.files.len());
+    for entry in &download.files {
+        files.push(ArtifactDownloadFile {
+            rel_path: entry.rel_path.clone(),
+            url: entry.url.clone(),
+            size_bytes: entry.size_bytes,
+            checksum: entry.checksum.clone(),
+        });
+    }
+
+    tracing::info!(
+        version = %download.model_version_id,
+        num_files = files.len(),
+        "new model version detected, downloading model files to local filesystem"
+    );
+
+    download_artifacts_to_dir(&model_root, &files)?;
+
+    let manifest = ModelDownloadManifest {
+        model_version_id: download.model_version_id.clone(),
+        files: download
+            .files
+            .iter()
+            .map(|f| ModelDownloadManifestFile {
+                rel_path: f.rel_path.clone(),
+                size_bytes: f.size_bytes,
+                checksum: f.checksum.clone(),
+            })
+            .collect(),
+    };
+
+    write_manifest_if_changed(&manifest_path, &manifest)?;
+
+    Ok(())
+}
+
+pub fn load_cached_model_source(
+    models_root: &Path,
+    model_version_id: &str,
+) -> Result<ModelSource, ModelCacheError> {
+    if model_version_id.is_empty() {
+        return Err(ModelCacheError::MissingActiveModelVersion);
+    }
+
+    let model_root = models_root.join(model_version_id);
+    let manifest_path = model_root.join("manifest.json");
+    let bytes = fs::read(&manifest_path)?;
+    let manifest: ModelDownloadManifest = serde_json::from_slice(&bytes)?;
+
+    let files = manifest
+        .files
+        .iter()
+        .map(|f| f.rel_path.clone())
+        .collect::<Vec<_>>();
+
+    for rel_path in &files {
+        let file_path = model_root.join(rel_path);
+        if !file_path.exists() {
+            return Err(ModelCacheError::MissingCachedFile(
+                file_path.display().to_string(),
+            ));
+        }
+    }
+
+    Ok(ModelSource::new(model_root, files))
+}
+
+fn write_manifest_if_changed(
+    path: &Path,
+    manifest: &ModelDownloadManifest,
+) -> Result<bool, ModelCacheError> {
+    let next = serde_json::to_vec_pretty(manifest)?;
+
+    match fs::read(path) {
+        Ok(current) if current == next => return Ok(false),
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(ModelCacheError::Io(err)),
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, &next)?;
+    fs::rename(tmp_path, path)?;
+
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "burn-central-runtime-{name}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn creates_model_cache_layout() {
+        let root = temp_path("model-cache");
+        let download = FleetModelDownloadResponse {
+            model_version_id: "mv-1".to_string(),
+            files: vec![],
+        };
+
+        ensure_cached_model(&root, "mv-1", &download).expect("model should cache");
+        let model_root = root.join("mv-1");
+        assert!(model_root.exists());
+        assert!(model_root.join("manifest.json").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+}

@@ -5,14 +5,16 @@ use crate::params::RoutineParam;
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine, Routine};
 use crate::{Args, MultiDevice};
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use burn::prelude::Backend;
+use burn_central_core::Env;
 use burn_central_core::bundle::{BundleDecode, FsBundleReader};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
@@ -32,11 +34,8 @@ pub struct ModelSource {
 }
 
 impl ModelSource {
-    pub fn dummy() -> Self {
-        Self {
-            root: PathBuf::new(),
-            files: vec![],
-        }
+    pub fn new(root: PathBuf, files: Vec<String>) -> Self {
+        Self { root, files }
     }
 }
 
@@ -291,9 +290,11 @@ where
         message: e.to_string(),
     })?;
     let fleet_session =
-        fleet::register(token.into(), metadata).map_err(|e| InferenceError::FactoryFailed {
-            name: "fleet registration".to_string(),
-            message: e.to_string(),
+        fleet::register(token.into(), metadata, &Env::Development).map_err(|e| {
+            InferenceError::FactoryFailed {
+                name: "fleet registration".to_string(),
+                message: e.to_string(),
+            }
         })?;
 
     let routine = IntoRoutine::into_routine(factory);
@@ -318,10 +319,19 @@ where
             Ok(inference)
         });
 
-    let inference =
-        FleetManagedInference::new(inference_name, fleet_session, inference_factory, device);
+    let inference = FleetManagedInference::initialize(
+        inference_name,
+        fleet_session,
+        inference_factory,
+        device,
+    )?;
 
     Ok(inference)
+}
+
+struct ActiveInference<I> {
+    inference: I,
+    model_version: String,
 }
 
 /// Inference wrapper that bootstraps burn-central features like fleet registration and telemetry on top of a typed inference implementation.
@@ -329,25 +339,11 @@ pub struct FleetManagedInference<B: Backend, I> {
     inference_name: String,
     fleet_session: RwLock<fleet::FleetDeviceSession>,
     factory: Box<dyn InferenceFactory<B, I>>,
-    active: ArcSwapOption<I>,
-    active_model_version: ArcSwap<String>,
-    staging: RwLock<StagingSlot<I>>,
-    active_build_gate: Mutex<()>,
-    staging_build_gate: Mutex<()>,
-}
-
-struct StagingSlot<I> {
-    inference: Option<Arc<I>>,
-    model_version: Option<String>,
-}
-
-impl<I> Default for StagingSlot<I> {
-    fn default() -> Self {
-        Self {
-            inference: None,
-            model_version: None,
-        }
-    }
+    device: B::Device,
+    active: ArcSwapOption<ActiveInference<I>>,
+    reconcile_gate: Mutex<()>,
+    last_sync_at: Mutex<Option<Instant>>,
+    sync_interval: Duration,
 }
 
 impl<B, I> FleetManagedInference<B, I>
@@ -355,110 +351,115 @@ where
     B: Backend,
     I: Inference + Send + Sync + 'static,
 {
-    pub fn new(
+    pub fn initialize(
         inference_name: impl Into<String>,
         fleet_session: fleet::FleetDeviceSession,
         factory: Box<dyn InferenceFactory<B, I>>,
-        _device: B::Device,
-    ) -> Self {
-        let active_model_version =
-            normalized_model_version(&fleet_session.state.active_model_version_id);
-
-        Self {
+        device: B::Device,
+    ) -> Result<Self, InferenceError> {
+        let inference = Self {
             inference_name: inference_name.into(),
             fleet_session: RwLock::new(fleet_session),
             factory,
+            device,
             active: ArcSwapOption::empty(),
-            active_model_version: ArcSwap::from_pointee(active_model_version),
-            staging: RwLock::new(StagingSlot::default()),
-            active_build_gate: Mutex::new(()),
-            staging_build_gate: Mutex::new(()),
-        }
+            reconcile_gate: Mutex::new(()),
+            last_sync_at: Mutex::new(None),
+            sync_interval: Duration::from_secs(30),
+        };
+        inference.ensure_ready()?;
+        Ok(inference)
     }
 
-    /// Build and cache the active model if needed, then return an `Arc` snapshot.
-    ///
-    /// The expensive build work is serialized and done without holding the slots lock.
-    pub fn get_or_build(&self, ctx: &mut InferenceContext<B>) -> Result<Arc<I>, InferenceError> {
-        if let Some(active) = self.active() {
-            return Ok(active);
+    fn maybe_sync_and_rollout(&self) -> Result<(), InferenceError> {
+        if self.active().is_some() && !self.should_sync_now() {
+            return Ok(());
         }
 
-        let _guard = self.active_build_gate.lock().unwrap();
-
-        if let Some(active) = self.active() {
-            return Ok(active);
+        let _guard = self.reconcile_gate.lock().unwrap();
+        if self.active().is_some() && !self.should_sync_now() {
+            return Ok(());
         }
 
-        let built = Arc::new(self.factory.build(ctx)?);
-        let version = self.current_active_model_version_from_fleet();
-        self.active.store(Some(built.clone()));
-        self.active_model_version.store(Arc::new(version));
+        let (fleet_version, model_source, config) = {
+            let mut session = self.fleet_session.write().unwrap();
 
-        Ok(built)
-    }
+            if let Err(err) = session.sync(None) {
+                self.mark_sync_now();
 
-    /// Build a new staging model version without touching currently active traffic.
-    pub fn prepare_staging(
-        &self,
-        ctx: &mut InferenceContext<B>,
-        model_version: impl Into<String>,
-    ) -> Result<(), InferenceError> {
-        let _guard = self.staging_build_gate.lock().unwrap();
-        let built = Arc::new(self.factory.build(ctx)?);
-        let model_version = normalized_model_version(&model_version.into());
+                if self.active().is_some() {
+                    tracing::warn!("fleet sync failed, keeping current active model: {err}");
+                    return Ok(());
+                }
 
-        let mut staging = self.staging.write().unwrap();
-        staging.inference = Some(built);
-        staging.model_version = Some(model_version);
+                return Err(InferenceError::FactoryFailed {
+                    name: self.inference_name.clone(),
+                    message: format!("fleet sync failed: {err}"),
+                });
+            }
+
+            let fleet_version = normalized_model_version(session.active_model_version_id());
+            let model_source =
+                session
+                    .model_source()
+                    .map_err(|err| InferenceError::FactoryFailed {
+                        name: self.inference_name.clone(),
+                        message: format!("fleet model source failed: {err}"),
+                    })?;
+
+            let config = session.runtime_config();
+
+            (fleet_version, model_source, config.clone())
+        };
+
+        self.mark_sync_now();
+
+        let active = self.active();
+        if active.as_ref().map(|a| &a.model_version) == Some(&fleet_version) {
+            return Ok(());
+        }
+
+        let init = InferenceInit {
+            model: model_source,
+            device: self.device.clone(),
+        };
+        let mut ctx = InferenceContext::new(init, InferenceArgs::new(Some(config)));
+        let built = self.factory.build(&mut ctx)?;
+
+        self.active.store(Some(Arc::new(ActiveInference {
+            inference: built,
+            model_version: fleet_version.clone(),
+        })));
+
         Ok(())
     }
 
-    /// Atomically promote staging to active.
-    ///
-    /// Returns `true` when promotion happened and `false` when no staging model exists.
-    pub fn promote_staging(&self) -> bool {
-        let (staging, staged_version) = {
-            let mut staging = self.staging.write().unwrap();
-            (staging.inference.take(), staging.model_version.take())
-        };
-
-        let Some(staging) = staging else {
-            return false;
-        };
-
-        let version =
-            staged_version.unwrap_or_else(|| self.current_active_model_version_from_fleet());
-        self.active.store(Some(staging));
-        self.active_model_version.store(Arc::new(version.clone()));
-
-        let mut session = self.fleet_session.write().unwrap();
-        session.state.active_model_version_id = version;
-
-        true
+    fn ensure_ready(&self) -> Result<(), InferenceError> {
+        self.maybe_sync_and_rollout()?;
+        if self.active().is_none() {
+            return Err(InferenceError::FactoryFailed {
+                name: self.inference_name.clone(),
+                message: "no active model after bootstrap".to_string(),
+            });
+        }
+        Ok(())
     }
 
-    /// Drop staging if present.
-    pub fn rollback_staging(&self) -> bool {
-        let mut staging = self.staging.write().unwrap();
-        let had_staging = staging.inference.take().is_some();
-        staging.model_version = None;
-        had_staging
+    fn should_sync_now(&self) -> bool {
+        let last_sync_at = self.last_sync_at.lock().unwrap();
+        match *last_sync_at {
+            Some(instant) => instant.elapsed() >= self.sync_interval,
+            None => true,
+        }
     }
 
-    /// Get an `Arc` snapshot of the currently active model.
-    pub fn active(&self) -> Option<Arc<I>> {
+    fn mark_sync_now(&self) {
+        let mut last_sync_at = self.last_sync_at.lock().unwrap();
+        *last_sync_at = Some(Instant::now());
+    }
+
+    fn active(&self) -> Option<Arc<ActiveInference<I>>> {
         self.active.load_full()
-    }
-
-    /// Current active model version id or `"unknown"`.
-    pub fn active_model_version(&self) -> String {
-        self.active_model_version.load_full().as_ref().to_string()
-    }
-
-    fn current_active_model_version_from_fleet(&self) -> String {
-        let session = self.fleet_session.read().unwrap();
-        normalized_model_version(&session.state.active_model_version_id)
     }
 }
 
@@ -471,31 +472,30 @@ where
     type Output = <I as Inference>::Output;
 
     fn infer(&self, input: Self::Input, writer: super::InferenceWriter<Self::Output>) {
-        let active = self.active();
-        let model_version = self.active_model_version();
+        if let Err(err) = self.maybe_sync_and_rollout() {
+            writer.error(Box::new(err)).ok();
+            return;
+        }
+
+        let Some(active) = self.active() else {
+            writer
+                .error(Box::new(InferenceError::FactoryFailed {
+                    name: self.inference_name.clone(),
+                    message: "no active model".to_string(),
+                }))
+                .ok();
+            return;
+        };
 
         let metadata = InferenceMetadata::new(
             self.inference_name.clone(),
             "unknown".to_string(),
-            model_version,
+            active.model_version.clone(),
         );
 
-        match active {
-            Some(inference) => {
-                let writer =
-                    writer.with_observer(Arc::new(InferenceWriterTelemetryObserver::new(metadata)));
-                inference.infer(input, writer)
-            }
-            None => {
-                // This should never happen since `get_or_build` should be called before inference.
-                writer
-                    .error(Box::new(InferenceError::FactoryFailed {
-                        name: self.inference_name.clone(),
-                        message: "inference not built".to_string(),
-                    }))
-                    .ok();
-            }
-        }
+        let writer =
+            writer.with_observer(Arc::new(InferenceWriterTelemetryObserver::new(metadata)));
+        active.inference.infer(input, writer)
     }
 }
 

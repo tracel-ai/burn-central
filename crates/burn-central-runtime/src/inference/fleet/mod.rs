@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
+use burn_central_client::fleet::FleetClient;
 use burn_central_core::Env;
 use directories::{BaseDirs, ProjectDirs};
-use serde::Deserialize;
+
+use crate::inference::ModelSource;
 
 mod model;
 mod state;
 
 pub type FleetRegistrationToken = String;
 pub type FleetDeviceToken = String;
-pub type FleetDeviceIdentityKey = String;
 
 pub type DeviceMetadata = serde_json::Value;
 
@@ -17,42 +18,125 @@ pub type DeviceMetadata = serde_json::Value;
 pub enum FleetError {
     #[error("fleet registration failed: {0}")]
     RegistrationFailed(String),
+    #[error("fleet sync failed: {0}")]
+    SyncFailed(String),
+    #[error("fleet model download failed: {0}")]
+    DownloadFailed(String),
     #[error("failed to determine cache directory")]
     CacheDirUnavailable,
+    #[error(transparent)]
+    State(#[from] state::FleetStateStoreError),
+    #[error(transparent)]
+    Model(#[from] model::ModelCacheError),
 }
 
 pub struct FleetDeviceSession {
-    pub device_token: FleetDeviceToken,
-    pub state: state::FleetState,
-    pub client: Box<dyn FleetApi + Send + Sync>,
+    device_token: FleetDeviceToken,
+    state: state::FleetState,
+    client: FleetClient,
+    fleet_key: String,
+    store: state::FleetLocalStateStore,
 }
 
 pub fn register(
     token: impl Into<FleetRegistrationToken>,
     metadata: DeviceMetadata,
+    env: &Env,
 ) -> anyhow::Result<FleetDeviceSession> {
-    let _root_dir = default_data_dir(&Env::Development)?;
+    let root_dir = default_data_dir(env)?;
+    let registration_token = token.into();
+    let fleet_key = state::fleet_key_from_registration_token(&registration_token);
 
-    let identity = FleetDeviceIdentityKey::default();
+    let client = FleetClient::new(env_to_client_env(env));
+    let store = state::FleetLocalStateStore::new(root_dir);
 
-    let client = NoopFleetApi;
-    let device = client.register_device(token.into(), identity, metadata)?;
+    let identity_key = store.load_or_create_machine_identity_key()?;
+    let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
+    // Register is expected to be idempotent server-side based on registration token + stable identity.
+    let registered = client
+        .register_device(
+            registration_token,
+            identity_key.clone(),
+            Some(metadata.clone()),
+        )
+        .map_err(|e| FleetError::RegistrationFailed(e.to_string()))?;
 
-    let state = state::FleetState::default();
+    let mut fleet_device =
+        FleetDeviceSession::new(registered.token, state, client, fleet_key, store);
+    fleet_device.sync(Some(metadata))?;
 
-    let fleet_device = FleetDeviceSession {
-        device_token: device.token,
-        state,
-        client: Box::new(client),
-    };
     Ok(fleet_device)
+}
+
+impl FleetDeviceSession {
+    fn new(
+        device_token: FleetDeviceToken,
+        state: state::FleetState,
+        client: FleetClient,
+        fleet_key: String,
+        store: state::FleetLocalStateStore,
+    ) -> Self {
+        Self {
+            device_token,
+            state,
+            client,
+            fleet_key,
+            store,
+        }
+    }
+
+    pub fn active_model_version_id(&self) -> &str {
+        &self.state.active_model_version_id()
+    }
+
+    pub fn model_source(&self) -> Result<ModelSource, FleetError> {
+        model::load_cached_model_source(
+            &self.store.models_dir(&self.fleet_key),
+            &self.state.active_model_version_id(),
+        )
+        .map_err(FleetError::from)
+    }
+
+    pub fn runtime_config(&self) -> &serde_json::Value {
+        self.state.runtime_config()
+    }
+
+    pub fn sync(&mut self, metadata: Option<DeviceMetadata>) -> Result<(), FleetError> {
+        tracing::info!("syncing fleet device with fleet management service");
+        let snapshot = self
+            .client
+            .sync(self.device_token.clone(), metadata)
+            .map_err(|e| FleetError::SyncFailed(e.to_string()))?;
+
+        let download = self
+            .client
+            .model_download(self.device_token.clone())
+            .map_err(|e| FleetError::DownloadFailed(e.to_string()))?;
+
+        model::ensure_cached_model(
+            &self.store.models_dir(&self.fleet_key),
+            &snapshot.model_version_id,
+            &download,
+        )?;
+
+        self.state
+            .update(snapshot.model_version_id, snapshot.runtime_config);
+
+        self.persist_state()
+    }
+
+    fn persist_state(&self) -> Result<(), FleetError> {
+        self.store
+            .save_fleet_state(&self.fleet_key, &self.state)
+            .map_err(FleetError::from)
+    }
 }
 
 /// Get the default cache directory for a given environment.
 fn default_data_dir(env: &Env) -> Result<PathBuf, FleetError> {
     let fleets_subdir = match env {
         Env::Production => "fleets".to_string(),
-        Env::Staging(version) => format!("fleets-staging-{}", version),
+        Env::Staging(version) => format!("fleets-staging-{version}"),
         Env::Development => "fleets-dev".to_string(),
     };
     if let Some(project) = ProjectDirs::from("ai", "tracel", "burn-central") {
@@ -64,88 +148,10 @@ fn default_data_dir(env: &Env) -> Result<PathBuf, FleetError> {
     Err(FleetError::CacheDirUnavailable)
 }
 
-pub struct RegisteredFleetDevice {
-    pub token: FleetRegistrationToken,
-}
-
-pub struct FleetSyncSnapshot {
-    pub model_id: String,
-    pub model_version_id: String,
-    pub runtime_config: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PresignedModelFileUrlResponse {
-    pub rel_path: String,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct FleetModelDownloadResponse {
-    pub model_version_id: String,
-    pub files: Vec<PresignedModelFileUrlResponse>,
-}
-
-/// API client for interacting with the fleet management backend.
-pub trait FleetApi {
-    /// Register a new device with the fleet, returning a device token that can be used for subsequent API calls.
-    fn register_device(
-        &self,
-        reg_token: FleetRegistrationToken,
-        identity_key: FleetDeviceIdentityKey,
-        metadata: DeviceMetadata,
-    ) -> Result<RegisteredFleetDevice, FleetError>;
-
-    /// Sync the device state with the fleet, returning any updates to the model version or runtime config.
-    fn sync(
-        &self,
-        device_token: FleetDeviceToken,
-        metadata: Option<DeviceMetadata>,
-    ) -> Result<FleetSyncSnapshot, FleetError>;
-
-    /// Download the model files for the specified model version, returning presigned URLs for each file.
-    fn download_model(
-        &self,
-        device_token: FleetDeviceToken,
-    ) -> Result<FleetModelDownloadResponse, FleetError>;
-}
-
-pub struct NoopFleetApi;
-
-impl FleetApi for NoopFleetApi {
-    fn register_device(
-        &self,
-        _reg_token: FleetRegistrationToken,
-        _identity_key: FleetDeviceIdentityKey,
-        _metadata: DeviceMetadata,
-    ) -> Result<RegisteredFleetDevice, FleetError> {
-        Ok(RegisteredFleetDevice {
-            token: "noop-token".to_string(),
-        })
-    }
-
-    fn sync(
-        &self,
-        _device_token: FleetDeviceToken,
-        _metadata: Option<DeviceMetadata>,
-    ) -> Result<FleetSyncSnapshot, FleetError> {
-        Ok(FleetSyncSnapshot {
-            model_id: "noop-model-id".to_string(),
-            model_version_id: "noop-model-version-id".to_string(),
-            runtime_config: serde_json::Value::Null,
-        })
-    }
-
-    fn download_model(
-        &self,
-        _device_token: FleetDeviceToken,
-    ) -> Result<FleetModelDownloadResponse, FleetError> {
-        Ok(FleetModelDownloadResponse {
-            model_version_id: "noop-model-version".to_string(),
-            files: vec![PresignedModelFileUrlResponse {
-                rel_path: "model.bin".to_string(),
-                url: "https://example.com/model.bin".to_string(),
-            }],
-        })
+fn env_to_client_env(env: &Env) -> burn_central_client::Env {
+    match env {
+        Env::Production => burn_central_client::Env::Production,
+        Env::Staging(v) => burn_central_client::Env::Staging(*v),
+        Env::Development => burn_central_client::Env::Development,
     }
 }
