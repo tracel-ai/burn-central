@@ -1,4 +1,4 @@
-mod envelope;
+mod event;
 mod logs;
 mod metrics;
 mod pipeline;
@@ -12,7 +12,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use std::collections::HashMap;
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use logs::LogRecord;
@@ -22,30 +22,43 @@ use crate::telemetry::metrics::{InMemoryMetricsRecorder, RecorderHandle};
 
 pub use pipeline::{TelemetryPipeline, TelemetryPipelineError};
 
-fn dispatch_log_record(record: LogRecord) {
-    let mut hubs_guard = HUBS.lock().unwrap();
-    let Some(weak_pipeline) = hubs_guard.get(&record.fleet_key) else {
-        return;
-    };
-
-    if let Some(pipeline) = weak_pipeline.upgrade() {
-        pipeline.enqueue_log(record);
-    } else {
-        hubs_guard.remove(&record.fleet_key);
-    }
-}
-
-fn unix_time_ms() -> u64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => duration.as_millis() as u64,
-        Err(_) => 0,
-    }
-}
-
+/// Global lock for telemetry initialization. Ensures that global telemetry state is only initialized once.
 static GLOBAL_ONCE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+/// Global metrics recorder instance. Used to support instrumentation via the metrics crate.
 static GLOBAL_RECORDER: OnceCell<InMemoryMetricsRecorder> = OnceCell::new();
-static HUBS: once_cell::sync::Lazy<Mutex<HashMap<String, Weak<TelemetryPipeline>>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+/// Global registry of telemetry pipelines identified by fleet key. Used to route log records to the correct pipeline.
+/// This is managed by [`TelemetryPipeline`] and used by the tracing log layer to dispatch log records.
+static PIPELINES: Lazy<PipelineRegistry> = Lazy::new(PipelineRegistry::default);
+
+/// Registry for telemetry pipelines, keyed by fleet key. Used to route telemetry to the correct pipeline.
+#[derive(Debug, Default)]
+struct PipelineRegistry {
+    hubs: Mutex<HashMap<String, Weak<TelemetryPipeline>>>,
+}
+
+impl PipelineRegistry {
+    fn add_pipeline(&self, fleet_key: String, pipeline: &Arc<TelemetryPipeline>) {
+        let mut hubs_guard = self.hubs.lock().unwrap();
+        hubs_guard.insert(fleet_key, Arc::downgrade(pipeline));
+    }
+
+    fn get_pipeline(&self, fleet_key: &str) -> Option<Arc<TelemetryPipeline>> {
+        let mut hubs_guard = self.hubs.lock().unwrap();
+        if let Some(weak_pipeline) = hubs_guard.get(fleet_key) {
+            if let Some(pipeline) = weak_pipeline.upgrade() {
+                return Some(pipeline);
+            } else {
+                hubs_guard.remove(fleet_key);
+            }
+        }
+        None
+    }
+
+    fn remove_pipeline(&self, fleet_key: &str) {
+        let mut hubs_guard = self.hubs.lock().unwrap();
+        hubs_guard.remove(fleet_key);
+    }
+}
 
 /// Creates a tracing layer that injects metrics context from the current span.
 /// Required for metrics to inherit tracing labels.
@@ -98,4 +111,19 @@ pub fn global_init() -> Result<(), &'static str> {
 pub fn global_recorder_handle() -> RecorderHandle {
     let global_recorder = GLOBAL_RECORDER.get_or_init(InMemoryMetricsRecorder::new);
     global_recorder.handle()
+}
+
+fn dispatch_log_record(record: LogRecord) {
+    let Some(pipeline) = PIPELINES.get_pipeline(&record.fleet_key) else {
+        return;
+    };
+
+    pipeline.enqueue_log(record);
+}
+
+fn unix_time_ms() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis() as u64,
+        Err(_) => 0,
+    }
 }

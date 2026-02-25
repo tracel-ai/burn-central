@@ -1,12 +1,12 @@
 use std::sync::Mutex;
 
 use crate::telemetry::{
-    envelope::TelemetryEnvelope,
+    event::TelemetryEvent,
     pipeline::{Outbox, OutboxId},
 };
 
 pub struct InMemoryOutbox {
-    queue: Mutex<Vec<(OutboxId, TelemetryEnvelope)>>,
+    queue: Mutex<Vec<(OutboxId, TelemetryEvent)>>,
     next_id: Mutex<OutboxId>,
 }
 
@@ -20,7 +20,7 @@ impl Default for InMemoryOutbox {
 }
 
 impl Outbox for InMemoryOutbox {
-    fn enqueue(&self, data: TelemetryEnvelope) -> Result<(), String> {
+    fn enqueue(&self, data: TelemetryEvent) -> Result<(), String> {
         let mut queue_guard = self
             .queue
             .lock()
@@ -35,7 +35,7 @@ impl Outbox for InMemoryOutbox {
         Ok(())
     }
 
-    fn claim(&self, count: usize) -> Result<Vec<(OutboxId, TelemetryEnvelope)>, String> {
+    fn claim(&self, count: usize) -> Result<Vec<(OutboxId, TelemetryEvent)>, String> {
         let mut queue_guard = self
             .queue
             .lock()

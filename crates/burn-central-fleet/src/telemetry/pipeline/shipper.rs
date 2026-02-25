@@ -2,19 +2,19 @@ use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 
-use super::super::envelope::TelemetryEnvelope;
+use super::super::event::TelemetryEvent;
 
 use super::Outbox;
 
 pub trait ShipperTransport: Send + Sync {
-    fn ship(&self, data: Vec<TelemetryEnvelope>) -> Result<(), String>;
+    fn ship(&self, data: Vec<TelemetryEvent>) -> Result<(), String>;
 }
 
 #[derive(Default)]
 pub struct NoopShipperTransport;
 
 impl ShipperTransport for NoopShipperTransport {
-    fn ship(&self, _data: Vec<TelemetryEnvelope>) -> Result<(), String> {
+    fn ship(&self, _data: Vec<TelemetryEvent>) -> Result<(), String> {
         Ok(())
     }
 }

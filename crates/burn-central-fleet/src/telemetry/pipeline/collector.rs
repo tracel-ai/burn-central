@@ -6,20 +6,20 @@ use std::{
     time::Duration,
 };
 
-use super::super::{envelope::TelemetryEnvelope, logs::LogBatch, metrics::RecorderHandle};
+use super::super::{event::TelemetryEvent, logs::LogBatch, metrics::RecorderHandle};
 
 use super::{LogIngress, Outbox};
 
 pub trait Batcher: Send + Sync {
-    fn tick(&self) -> Result<Vec<TelemetryEnvelope>, String>;
+    fn collect(&self) -> Result<Vec<TelemetryEvent>, String>;
 }
 
-pub struct BatcherHandle {
+pub struct CollectorHandle {
     join_handle: Option<std::thread::JoinHandle<()>>,
     shutdown_tx: Option<Sender<()>>,
 }
 
-impl BatcherHandle {
+impl CollectorHandle {
     pub fn shutdown(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
@@ -27,40 +27,40 @@ impl BatcherHandle {
 
         if let Some(join_handle) = self.join_handle.take() {
             if join_handle.join().is_err() {
-                tracing::warn!("telemetry batcher thread panicked during shutdown");
+                tracing::warn!("telemetry collector thread panicked during shutdown");
             }
         }
     }
 }
 
-impl Drop for BatcherHandle {
+impl Drop for CollectorHandle {
     fn drop(&mut self) {
         self.shutdown();
     }
 }
 
-pub struct MetricsEnvelopeBatcher {
+pub struct MetricsEventCollector {
     recorder: RecorderHandle,
 }
 
-impl MetricsEnvelopeBatcher {
+impl MetricsEventCollector {
     pub fn new(recorder: RecorderHandle) -> Self {
         Self { recorder }
     }
 }
 
-impl Batcher for MetricsEnvelopeBatcher {
-    fn tick(&self) -> Result<Vec<TelemetryEnvelope>, String> {
-        Ok(vec![TelemetryEnvelope::metrics(self.recorder.snapshot())])
+impl Batcher for MetricsEventCollector {
+    fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
+        Ok(vec![TelemetryEvent::metrics(self.recorder.snapshot())])
     }
 }
 
-pub struct LogsBatcher {
+pub struct LogsCollector {
     ingress: Arc<LogIngress>,
     max_batch_entries: usize,
 }
 
-impl LogsBatcher {
+impl LogsCollector {
     pub fn new(ingress: Arc<LogIngress>, max_batch_entries: usize) -> Self {
         Self {
             ingress,
@@ -69,40 +69,40 @@ impl LogsBatcher {
     }
 }
 
-impl Batcher for LogsBatcher {
-    fn tick(&self) -> Result<Vec<TelemetryEnvelope>, String> {
+impl Batcher for LogsCollector {
+    fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
         let entries = self.ingress.pop_batch(self.max_batch_entries);
 
         if entries.is_empty() {
             Ok(vec![])
         } else {
-            Ok(vec![TelemetryEnvelope::logs(LogBatch { entries })])
+            Ok(vec![TelemetryEvent::logs(LogBatch { entries })])
         }
     }
 }
 
 pub fn start(
+    name: &str,
     batcher: Arc<dyn Batcher>,
     outbox: Arc<dyn Outbox>,
     interval: Duration,
-    thread_name: &str,
-) -> BatcherHandle {
+) -> CollectorHandle {
     let (shutdown_tx, shutdown_rx) = channel::<()>();
-    let thread_name = thread_name.to_string();
+    let thread_name = name.to_string();
     let join_handle = std::thread::Builder::new()
         .name(thread_name)
         .spawn(move || {
             loop {
-                match batcher.tick() {
+                match batcher.collect() {
                     Ok(batches) => {
                         for batch in batches {
                             if let Err(e) = outbox.enqueue(batch) {
-                                tracing::error!("failed to enqueue telemetry envelope: {e}");
+                                tracing::error!("failed to enqueue telemetry event: {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        tracing::error!("batcher tick failed: {e}");
+                        tracing::error!("collector collect failed: {e}");
                     }
                 }
 
@@ -112,9 +112,9 @@ pub fn start(
                 }
             }
         })
-        .expect("failed to spawn batcher thread");
+        .expect("failed to spawn collector thread");
 
-    BatcherHandle {
+    CollectorHandle {
         join_handle: Some(join_handle),
         shutdown_tx: Some(shutdown_tx),
     }

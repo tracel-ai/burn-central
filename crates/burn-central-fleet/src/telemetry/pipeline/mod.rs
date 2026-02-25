@@ -8,14 +8,14 @@ use std::{
     time::Duration,
 };
 
-use crate::telemetry::{HUBS, global_init, global_recorder_handle};
+use crate::telemetry::{PIPELINES, global_init, global_recorder_handle};
 
-use super::envelope::TelemetryEnvelope;
+use super::event::TelemetryEvent;
 use super::logs::LogRecord;
 use super::metrics::RecorderHandle;
 use outbox::InMemoryOutbox;
 
-mod batcher;
+mod collector;
 mod outbox;
 mod shipper;
 
@@ -28,8 +28,8 @@ pub enum TelemetryPipelineError {
 pub type OutboxId = i64;
 
 pub trait Outbox: Send + Sync {
-    fn enqueue(&self, data: TelemetryEnvelope) -> Result<(), String>;
-    fn claim(&self, count: usize) -> Result<Vec<(OutboxId, TelemetryEnvelope)>, String>;
+    fn enqueue(&self, data: TelemetryEvent) -> Result<(), String>;
+    fn claim(&self, count: usize) -> Result<Vec<(OutboxId, TelemetryEvent)>, String>;
     fn complete(&self, id: OutboxId) -> Result<(), String>;
     fn fail(&self, id: OutboxId, error: &str) -> Result<(), String>;
 }
@@ -71,7 +71,7 @@ impl LogIngress {
 pub struct TelemetryPipeline {
     fleet_key: String,
     log_ingress: Arc<LogIngress>,
-    batcher_handles: Vec<batcher::BatcherHandle>,
+    batcher_handles: Vec<collector::CollectorHandle>,
     shipper_handle: shipper::ShipperHandle,
 }
 
@@ -81,16 +81,13 @@ impl TelemetryPipeline {
             TelemetryPipelineError::InitializationFailed(fleet_key.clone(), e.to_string())
         })?;
 
-        let mut hubs_guard = HUBS.lock().unwrap();
-        if let Some(weak_pipeline) = hubs_guard.get(&fleet_key) {
-            if let Some(pipeline) = weak_pipeline.upgrade() {
-                return Ok(pipeline);
-            }
+        if let Some(pipeline) = PIPELINES.get_pipeline(&fleet_key) {
+            return Ok(pipeline);
         }
 
         let recorder = global_recorder_handle();
         let pipeline = Arc::new(Self::start(fleet_key.clone(), recorder)?);
-        hubs_guard.insert(fleet_key, Arc::downgrade(&pipeline));
+        PIPELINES.add_pipeline(fleet_key, &pipeline);
         Ok(pipeline)
     }
 
@@ -103,17 +100,17 @@ impl TelemetryPipeline {
         let log_ingress = Arc::new(LogIngress::default());
 
         let batcher_handles = vec![
-            batcher::start(
-                Arc::new(batcher::MetricsEnvelopeBatcher::new(recorder)),
+            collector::start(
+                "telemetry-batcher-metrics",
+                Arc::new(collector::MetricsEventCollector::new(recorder)),
                 outbox.clone(),
                 Duration::from_secs(5),
-                "telemetry-batcher-metrics",
             ),
-            batcher::start(
-                Arc::new(batcher::LogsBatcher::new(log_ingress.clone(), 256)),
+            collector::start(
+                "telemetry-batcher-logs",
+                Arc::new(collector::LogsCollector::new(log_ingress.clone(), 256)),
                 outbox.clone(),
                 Duration::from_secs(2),
-                "telemetry-batcher-logs",
             ),
         ];
 
@@ -134,10 +131,7 @@ impl TelemetryPipeline {
 
 impl Drop for TelemetryPipeline {
     fn drop(&mut self) {
-        {
-            let mut hubs_guard = HUBS.lock().unwrap();
-            hubs_guard.remove(&self.fleet_key);
-        }
+        PIPELINES.remove_pipeline(&self.fleet_key);
 
         for handle in &mut self.batcher_handles {
             handle.shutdown();
