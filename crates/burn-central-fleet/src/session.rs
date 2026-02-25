@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use burn_central_client::{Env, FleetClient};
 use directories::{BaseDirs, ProjectDirs};
@@ -8,6 +8,7 @@ use crate::{
     error::FleetError,
     model::{self, ModelSource},
     state,
+    telemetry::TelemetryPipeline,
 };
 
 pub struct FleetDeviceSession {
@@ -18,6 +19,7 @@ pub struct FleetDeviceSession {
     fleet_key: String,
     store: state::FleetLocalStateStore,
     pending_bootstrap_metadata: Option<DeviceMetadata>,
+    _telemetry: Arc<TelemetryPipeline>,
 }
 
 impl FleetDeviceSession {
@@ -37,6 +39,7 @@ impl FleetDeviceSession {
 
         let client = FleetClient::new(env.clone());
         let store = state::FleetLocalStateStore::new(root_dir);
+        let telemetry = TelemetryPipeline::get_or_init(fleet_key.clone())?;
 
         let identity_key = store.load_or_create_machine_identity_key()?;
         let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
@@ -48,6 +51,7 @@ impl FleetDeviceSession {
             fleet_key,
             store,
             Some(metadata),
+            telemetry,
         );
 
         Ok(fleet_device)
@@ -61,6 +65,7 @@ impl FleetDeviceSession {
         fleet_key: String,
         store: state::FleetLocalStateStore,
         pending_bootstrap_metadata: Option<DeviceMetadata>,
+        telemetry: Arc<TelemetryPipeline>,
     ) -> Self {
         Self {
             registration_token,
@@ -70,6 +75,7 @@ impl FleetDeviceSession {
             fleet_key,
             store,
             pending_bootstrap_metadata,
+            _telemetry: telemetry,
         }
     }
 

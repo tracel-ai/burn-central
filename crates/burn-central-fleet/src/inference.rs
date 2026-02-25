@@ -226,8 +226,9 @@ where
             active.model_version.clone(),
         );
 
-        let writer =
-            writer.with_observer(Arc::new(InferenceWriterTelemetryObserver::new(metadata)));
+        let writer = writer.with_observer(Arc::new(
+            InferenceWriterTelemetryObserver::with_telemetry(metadata),
+        ));
         active.inference.infer(input, writer)
     }
 }

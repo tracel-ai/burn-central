@@ -1,4 +1,4 @@
-use crate::{model, state};
+use crate::{model, state, telemetry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetError {
@@ -12,4 +12,6 @@ pub enum FleetError {
     State(#[from] state::FleetStateStoreError),
     #[error(transparent)]
     Model(#[from] model::ModelCacheError),
+    #[error("telemetry pipeline failed: {0}")]
+    TelemetryInitFailed(#[from] telemetry::TelemetryPipelineError),
 }
