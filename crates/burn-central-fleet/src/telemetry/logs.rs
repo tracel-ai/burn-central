@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::registry::LookupSpan;
 
+#[cfg(test)]
+use once_cell::sync::Lazy;
+#[cfg(test)]
+use std::sync::Mutex;
+
 use super::{dispatch_log_record, unix_time_ms};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -223,5 +228,102 @@ where
             message,
             inherited_fields,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    static TEST_SERIAL: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    fn run_with_log_layer(test_fn: impl FnOnce()) -> Vec<LogRecord> {
+        let _serial_guard = TEST_SERIAL
+            .lock()
+            .expect("test serial lock should not be poisoned");
+        super::super::clear_dispatched_log_records_for_test();
+
+        let subscriber = tracing_subscriber::registry().with(TelemetryLogLayer);
+        tracing::subscriber::with_default(subscriber, test_fn);
+
+        super::super::take_dispatched_log_records_for_test()
+    }
+
+    fn field_value<'a>(record: &'a LogRecord, key: &str) -> Option<&'a str> {
+        record
+            .fields
+            .iter()
+            .find(|field| field.key == key)
+            .map(|field| field.value.as_str())
+    }
+
+    #[test]
+    fn log_layer_records_event_with_inherited_span_fields() {
+        let records = run_with_log_layer(|| {
+            let span = tracing::info_span!(
+                "request",
+                fleet_key = "fleet-a",
+                request_id = 7u64,
+                model = tracing::field::Empty
+            );
+            span.record("model", &"resnet50");
+            let _guard = span.enter();
+
+            tracing::info!(attempt = 2u64, "inference finished");
+        });
+
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.fleet_key, "fleet-a");
+        assert!(matches!(record.level, LogLevel::Info));
+        assert_eq!(record.message, "inference finished");
+        assert!(record.timestamp_unix_ms > 0);
+        assert_eq!(
+            field_value(record, "span.request.request_id"),
+            Some("7"),
+            "request_id should be inherited from span fields",
+        );
+        assert_eq!(
+            field_value(record, "span.request.model"),
+            Some("resnet50"),
+            "recorded span fields should appear in log fields",
+        );
+        assert_eq!(field_value(record, "attempt"), Some("2"));
+        assert!(
+            field_value(record, "event.target").is_some(),
+            "event target should be included",
+        );
+    }
+
+    #[test]
+    fn log_layer_drops_event_without_fleet_key() {
+        let records = run_with_log_layer(|| {
+            tracing::warn!(attempt = 1u64, "fleet key missing");
+        });
+
+        assert!(
+            records.is_empty(),
+            "events without fleet key should not be dispatched",
+        );
+    }
+
+    #[test]
+    fn log_layer_prefers_event_fleet_key_over_span_fleet_key() {
+        let records = run_with_log_layer(|| {
+            let span = tracing::info_span!("request", fleet_key = "span-fleet");
+            let _guard = span.enter();
+
+            tracing::info!(fleet_key = "event-fleet", "override fleet key");
+        });
+
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.fleet_key, "event-fleet");
+        assert_eq!(field_value(record, "fleet_key"), Some("event-fleet"));
+        assert_eq!(
+            field_value(record, "span.request.fleet_key"),
+            Some("span-fleet")
+        );
     }
 }

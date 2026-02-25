@@ -29,6 +29,9 @@ static GLOBAL_RECORDER: OnceCell<InMemoryMetricsRecorder> = OnceCell::new();
 /// Global registry of telemetry pipelines identified by fleet key. Used to route log records to the correct pipeline.
 /// This is managed by [`TelemetryPipeline`] and used by the tracing log layer to dispatch log records.
 static PIPELINES: Lazy<PipelineRegistry> = Lazy::new(PipelineRegistry::default);
+#[cfg(test)]
+static DISPATCHED_LOG_RECORDS_FOR_TEST: Lazy<Mutex<Vec<LogRecord>>> =
+    Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Registry for telemetry pipelines, keyed by fleet key. Used to route telemetry to the correct pipeline.
 #[derive(Debug, Default)]
@@ -114,11 +117,29 @@ pub fn global_recorder_handle() -> RecorderHandle {
 }
 
 fn dispatch_log_record(record: LogRecord) {
+    #[cfg(test)]
+    {
+        let mut records_guard = DISPATCHED_LOG_RECORDS_FOR_TEST.lock().unwrap();
+        records_guard.push(record.clone());
+    }
+
     let Some(pipeline) = PIPELINES.get_pipeline(&record.fleet_key) else {
         return;
     };
 
     pipeline.enqueue_log(record);
+}
+
+#[cfg(test)]
+fn clear_dispatched_log_records_for_test() {
+    let mut records_guard = DISPATCHED_LOG_RECORDS_FOR_TEST.lock().unwrap();
+    records_guard.clear();
+}
+
+#[cfg(test)]
+fn take_dispatched_log_records_for_test() -> Vec<LogRecord> {
+    let mut records_guard = DISPATCHED_LOG_RECORDS_FOR_TEST.lock().unwrap();
+    std::mem::take(&mut *records_guard)
 }
 
 fn unix_time_ms() -> u64 {

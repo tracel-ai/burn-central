@@ -309,4 +309,44 @@ mod tests {
             .find(|metric| metric.key.name == "fleet.hist.drain");
         assert!(second_hist.is_none());
     }
+
+    #[test]
+    fn snapshot_keeps_counter_and_gauge_values_between_batches() {
+        let recorder = InMemoryMetricsRecorder::new();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            metrics::counter!("fleet.counter.persist", "kind" => "request").increment(5);
+            metrics::gauge!("fleet.gauge.persist", "kind" => "memory").set(64.0);
+        });
+
+        let first = handle.snapshot();
+        let second = handle.snapshot();
+
+        let first_counter = first
+            .counters
+            .iter()
+            .find(|metric| metric.key.name == "fleet.counter.persist")
+            .expect("first snapshot should contain counter");
+        let second_counter = second
+            .counters
+            .iter()
+            .find(|metric| metric.key.name == "fleet.counter.persist")
+            .expect("second snapshot should still contain counter");
+        assert_eq!(first_counter.value, 5);
+        assert_eq!(second_counter.value, 5);
+
+        let first_gauge = first
+            .gauges
+            .iter()
+            .find(|metric| metric.key.name == "fleet.gauge.persist")
+            .expect("first snapshot should contain gauge");
+        let second_gauge = second
+            .gauges
+            .iter()
+            .find(|metric| metric.key.name == "fleet.gauge.persist")
+            .expect("second snapshot should still contain gauge");
+        assert!((first_gauge.value - 64.0).abs() < f64::EPSILON);
+        assert!((second_gauge.value - 64.0).abs() < f64::EPSILON);
+    }
 }
