@@ -23,11 +23,11 @@ impl TelemetryEnvelope {
         }
     }
 
-    pub(crate) fn metrics(payload: MetricBatch) -> Self {
+    pub fn metrics(payload: MetricBatch) -> Self {
         Self::new(TelemetryData::Metrics(payload))
     }
 
-    pub(crate) fn logs(payload: LogBatch) -> Self {
+    pub fn logs(payload: LogBatch) -> Self {
         Self::new(TelemetryData::Logs(payload))
     }
 }
