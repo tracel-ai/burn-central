@@ -97,7 +97,7 @@ pub struct InferenceWriterTelemetryObserver {
 }
 
 impl InferenceWriterTelemetryObserver {
-    pub fn with_telemetry(metadata: InferenceMetadata) -> Self {
+    pub fn new(metadata: InferenceMetadata) -> Self {
         Self { metadata }
     }
 }
