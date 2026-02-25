@@ -1,6 +1,7 @@
 use crossbeam_queue::SegQueue;
 
 use std::{
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -13,7 +14,7 @@ use crate::telemetry::{PIPELINES, global_init, global_recorder_handle};
 use super::event::TelemetryEvent;
 use super::logs::LogRecord;
 use super::metrics::RecorderHandle;
-use outbox::InMemoryOutbox;
+use outbox::WalOutbox;
 
 mod collector;
 mod outbox;
@@ -76,7 +77,10 @@ pub struct TelemetryPipeline {
 }
 
 impl TelemetryPipeline {
-    pub fn get_or_init(fleet_key: String) -> Result<Arc<Self>, TelemetryPipelineError> {
+    pub fn get_or_init(
+        fleet_key: String,
+        root_dir: PathBuf,
+    ) -> Result<Arc<Self>, TelemetryPipelineError> {
         global_init().map_err(|e| {
             TelemetryPipelineError::InitializationFailed(fleet_key.clone(), e.to_string())
         })?;
@@ -86,7 +90,7 @@ impl TelemetryPipeline {
         }
 
         let recorder = global_recorder_handle();
-        let pipeline = Arc::new(Self::start(fleet_key.clone(), recorder)?);
+        let pipeline = Arc::new(Self::start(fleet_key.clone(), recorder, root_dir)?);
         PIPELINES.add_pipeline(fleet_key, &pipeline);
         Ok(pipeline)
     }
@@ -95,8 +99,21 @@ impl TelemetryPipeline {
         let _ = self.log_ingress.push(record);
     }
 
-    fn start(fleet_key: String, recorder: RecorderHandle) -> Result<Self, TelemetryPipelineError> {
-        let outbox = Arc::new(InMemoryOutbox::default());
+    fn start(
+        fleet_key: String,
+        recorder: RecorderHandle,
+        root_dir: PathBuf,
+    ) -> Result<Self, TelemetryPipelineError> {
+        let outbox_path = telemetry_outbox_path(&root_dir, &fleet_key);
+        let outbox = Arc::new(WalOutbox::new(outbox_path.clone()).map_err(|e| {
+            TelemetryPipelineError::InitializationFailed(
+                fleet_key.clone(),
+                format!(
+                    "failed to initialize wal outbox '{}': {e}",
+                    outbox_path.display()
+                ),
+            )
+        })?);
         let log_ingress = Arc::new(LogIngress::default());
 
         let batcher_handles = vec![
@@ -127,6 +144,13 @@ impl TelemetryPipeline {
             shipper_handle,
         })
     }
+}
+
+fn telemetry_outbox_path(root_dir: &Path, fleet_key: &str) -> PathBuf {
+    root_dir
+        .join("telemetry")
+        .join("outbox")
+        .join(format!("{fleet_key}.wal"))
 }
 
 impl Drop for TelemetryPipeline {

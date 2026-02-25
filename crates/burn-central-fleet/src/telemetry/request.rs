@@ -5,6 +5,7 @@ use std::time::Duration;
 /// Fleet-owned facts about a completed inference request.
 #[derive(Debug, Clone)]
 pub struct RequestTelemetry {
+    pub fleet_key: String,
     pub inference_name: String,
     pub model_name: String,
     pub model_version: String,
@@ -17,6 +18,7 @@ pub struct RequestTelemetry {
 /// Fleet metadata attached to each inference request.
 #[derive(Debug, Clone)]
 pub struct InferenceMetadata {
+    pub fleet_key: String,
     pub inference_name: String,
     pub model_name: String,
     pub model_version: String,
@@ -24,11 +26,13 @@ pub struct InferenceMetadata {
 
 impl InferenceMetadata {
     pub fn new(
+        fleet_key: impl Into<String>,
         inference_name: impl Into<String>,
         model_name: impl Into<String>,
         model_version: impl Into<String>,
     ) -> Self {
         Self {
+            fleet_key: fleet_key.into(),
             inference_name: inference_name.into(),
             model_name: model_name.into(),
             model_version: model_version.into(),
@@ -38,7 +42,7 @@ impl InferenceMetadata {
 
 impl Default for InferenceMetadata {
     fn default() -> Self {
-        Self::new("unknown", "unknown", "unknown")
+        Self::new("unknown", "unknown", "unknown", "unknown")
     }
 }
 
@@ -51,6 +55,7 @@ pub fn record_request(data: RequestTelemetry) {
         "inference_name" => data.inference_name.clone(),
         "model_name" => data.model_name.clone(),
         "model_version" => data.model_version.clone(),
+        "fleet_key" => data.fleet_key.clone(),
         "cancelled" => cancelled.clone(),
     )
     .increment(1);
@@ -60,6 +65,7 @@ pub fn record_request(data: RequestTelemetry) {
         "inference_name" => data.inference_name.clone(),
         "model_name" => data.model_name.clone(),
         "model_version" => data.model_version.clone(),
+        "fleet_key" => data.fleet_key.clone(),
     )
     .increment(data.outputs as u64);
 
@@ -68,6 +74,7 @@ pub fn record_request(data: RequestTelemetry) {
         "inference_name" => data.inference_name.clone(),
         "model_name" => data.model_name.clone(),
         "model_version" => data.model_version.clone(),
+        "fleet_key" => data.fleet_key.clone(),
     )
     .increment(data.errors as u64);
 
@@ -76,6 +83,7 @@ pub fn record_request(data: RequestTelemetry) {
         "inference_name" => data.inference_name.clone(),
         "model_name" => data.model_name.clone(),
         "model_version" => data.model_version.clone(),
+        "fleet_key" => data.fleet_key.clone(),
         "cancelled" => cancelled,
     )
     .record(duration_ms);
@@ -85,6 +93,7 @@ pub fn record_request(data: RequestTelemetry) {
             inference_name = data.inference_name.as_str(),
             model_name = data.model_name.as_str(),
             model_version = data.model_version.as_str(),
+            fleet_key = data.fleet_key.as_str(),
             errors = data.errors,
             "inference finished with writer errors"
         );
@@ -105,6 +114,7 @@ impl InferenceWriterTelemetryObserver {
 impl InferenceWriterObserver for InferenceWriterTelemetryObserver {
     fn on_finish(&self, stats: &InferenceWriterStats) {
         record_request(RequestTelemetry {
+            fleet_key: self.metadata.fleet_key.clone(),
             inference_name: self.metadata.inference_name.clone(),
             model_name: self.metadata.model_name.clone(),
             model_version: self.metadata.model_version.clone(),

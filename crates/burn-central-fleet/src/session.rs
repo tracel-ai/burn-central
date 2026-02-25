@@ -38,8 +38,8 @@ impl FleetDeviceSession {
         );
 
         let client = FleetClient::new(env.clone());
-        let store = state::FleetLocalStateStore::new(root_dir);
-        let telemetry = TelemetryPipeline::get_or_init(fleet_key.clone())?;
+        let store = state::FleetLocalStateStore::new(root_dir.clone());
+        let telemetry = TelemetryPipeline::get_or_init(fleet_key.clone(), root_dir)?;
 
         let identity_key = store.load_or_create_machine_identity_key()?;
         let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
@@ -59,6 +59,10 @@ impl FleetDeviceSession {
 
     pub fn active_model_version_id(&self) -> &str {
         self.state.active_model_version_id()
+    }
+
+    pub fn fleet_key(&self) -> &str {
+        &self.fleet_key
     }
 
     pub fn model_source(&self) -> Result<ModelSource, FleetError> {

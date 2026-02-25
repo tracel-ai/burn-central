@@ -82,6 +82,14 @@ where
     }
 
     fn maybe_sync_and_rollout(&self) -> Result<(), FleetManagedInferenceError> {
+        let fleet_key = self.current_fleet_key();
+        let reconcile_span = tracing::info_span!(
+            "fleet.inference.reconcile",
+            fleet_key = fleet_key.as_str(),
+            inference_name = self.inference_name.as_str(),
+        );
+        let _reconcile_guard = reconcile_span.enter();
+
         if self.active().is_some() && !self.should_sync_now() {
             return Ok(());
         }
@@ -194,6 +202,10 @@ where
     fn active(&self) -> Option<Arc<ActiveInference<I>>> {
         self.active.load_full()
     }
+
+    fn current_fleet_key(&self) -> String {
+        self.fleet_session.read().unwrap().fleet_key().to_string()
+    }
 }
 
 impl<B, I> Inference for FleetManagedInference<B, I>
@@ -205,6 +217,14 @@ where
     type Output = <I as Inference>::Output;
 
     fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
+        let fleet_key = self.current_fleet_key();
+        let request_span = tracing::info_span!(
+            "fleet.inference.request",
+            fleet_key = fleet_key.as_str(),
+            inference_name = self.inference_name.as_str(),
+        );
+        let _request_guard = request_span.enter();
+
         if let Err(err) = self.maybe_sync_and_rollout() {
             writer.error(Box::new(err)).ok();
             return;
@@ -221,6 +241,7 @@ where
         };
 
         let metadata = InferenceMetadata::new(
+            fleet_key,
             self.inference_name.clone(),
             "unknown".to_string(),
             active.model_version.clone(),

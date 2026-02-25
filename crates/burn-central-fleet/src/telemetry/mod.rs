@@ -74,7 +74,7 @@ where
 
 /// Creates a metrics recorder that inherits tracing context from the current span.
 /// Required for metrics to inherit tracing labels.
-pub fn metrics_recorder_with_tracing_context() -> impl ::metrics::Recorder {
+pub fn metrics_recorder() -> impl ::metrics::Recorder {
     let global_recorder = GLOBAL_RECORDER.get_or_init(InMemoryMetricsRecorder::new);
     metrics_tracing_context::TracingContextLayer::all().layer(global_recorder.clone())
 }
@@ -93,7 +93,7 @@ where
 /// This setup is best-effort:
 /// - If a tracing subscriber is already installed, we keep using it.
 /// - If a metrics recorder is already installed, we keep using it.
-pub fn global_init() -> Result<(), &'static str> {
+fn global_init() -> Result<(), &'static str> {
     let mut once_guard = GLOBAL_ONCE.lock().unwrap();
     if *once_guard {
         return Ok(());
@@ -104,14 +104,14 @@ pub fn global_init() -> Result<(), &'static str> {
         .with(tracing_log_layer())
         .try_init();
 
-    let recorder = metrics_recorder_with_tracing_context();
+    let recorder = metrics_recorder();
     let _ = ::metrics::set_global_recorder(recorder);
 
     *once_guard = true;
     Ok(())
 }
 
-pub fn global_recorder_handle() -> RecorderHandle {
+fn global_recorder_handle() -> RecorderHandle {
     let global_recorder = GLOBAL_RECORDER.get_or_init(InMemoryMetricsRecorder::new);
     global_recorder.handle()
 }
