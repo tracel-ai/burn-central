@@ -132,11 +132,11 @@ impl metrics::Recorder for InMemoryMetricsRecorder {
         key: &metrics::Key,
         _meta: &metrics::Metadata<'_>,
     ) -> metrics::Counter {
-        self.registry.register_counter(key).into()
+        self.registry.register_counter(key)
     }
 
     fn register_gauge(&self, key: &metrics::Key, _meta: &metrics::Metadata<'_>) -> metrics::Gauge {
-        self.registry.register_gauge(key).into()
+        self.registry.register_gauge(key)
     }
 
     fn register_histogram(
@@ -144,7 +144,7 @@ impl metrics::Recorder for InMemoryMetricsRecorder {
         key: &metrics::Key,
         _meta: &metrics::Metadata<'_>,
     ) -> metrics::Histogram {
-        self.registry.register_histogram(key).into()
+        self.registry.register_histogram(key)
     }
 }
 

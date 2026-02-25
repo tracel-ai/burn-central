@@ -43,40 +43,18 @@ impl FleetDeviceSession {
 
         let identity_key = store.load_or_create_machine_identity_key()?;
         let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
-        let fleet_device = FleetDeviceSession::new(
+        let fleet_device = FleetDeviceSession {
             registration_token,
             identity_key,
             state,
             client,
             fleet_key,
             store,
-            Some(metadata),
-            telemetry,
-        );
+            pending_bootstrap_metadata: Some(metadata),
+            _telemetry: telemetry,
+        };
 
         Ok(fleet_device)
-    }
-
-    fn new(
-        registration_token: FleetRegistrationToken,
-        identity_key: String,
-        state: state::FleetState,
-        client: FleetClient,
-        fleet_key: String,
-        store: state::FleetLocalStateStore,
-        pending_bootstrap_metadata: Option<DeviceMetadata>,
-        telemetry: Arc<TelemetryPipeline>,
-    ) -> Self {
-        Self {
-            registration_token,
-            identity_key,
-            state,
-            client,
-            fleet_key,
-            store,
-            pending_bootstrap_metadata,
-            _telemetry: telemetry,
-        }
     }
 
     pub fn active_model_version_id(&self) -> &str {
