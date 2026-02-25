@@ -37,7 +37,6 @@ pub struct LogRecord {
     pub timestamp_unix_ms: u64,
     pub fleet_key: String,
     pub level: LogLevel,
-    pub target: String,
     pub message: String,
     pub fields: Vec<LogField>,
 }
@@ -46,7 +45,6 @@ impl LogRecord {
     pub fn new(
         fleet_key: String,
         level: LogLevel,
-        target: impl Into<String>,
         message: impl Into<String>,
         fields: Vec<LogField>,
     ) -> Self {
@@ -54,7 +52,6 @@ impl LogRecord {
             timestamp_unix_ms: unix_time_ms(),
             fleet_key,
             level,
-            target: target.into(),
             message: message.into(),
             fields,
         }
@@ -204,6 +201,10 @@ where
             visitor.fleet_key = inherited_fleet_key;
         }
 
+        let Some(fleet_key) = visitor.fleet_key else {
+            return;
+        };
+
         let metadata = event.metadata();
         let message = visitor
             .message
@@ -211,15 +212,14 @@ where
             .unwrap_or_else(|| metadata.name().to_string());
         inherited_fields.extend(visitor.fields);
 
-        let Some(fleet_key) = visitor.fleet_key else {
-            // If no fleet key is found in the event or its parent spans, we skip logging
-            return;
-        };
+        inherited_fields.push(LogField {
+            key: "event.target".to_string(),
+            value: metadata.target().to_string(),
+        });
 
         dispatch_log_record(LogRecord::new(
             fleet_key,
             LogLevel::from(metadata.level()),
-            metadata.target().to_string(),
             message,
             inherited_fields,
         ));
