@@ -56,8 +56,8 @@ pub fn start(
             loop {
                 match outbox.claim(10) {
                     Ok(items) => {
-                        let (ids, envelopes): (Vec<_>, Vec<_>) = items.into_iter().unzip();
-                        match transport.ship(envelopes) {
+                        let (ids, events): (Vec<_>, Vec<_>) = items.into_iter().unzip();
+                        match transport.ship(events) {
                             Ok(_) => {
                                 for id in ids {
                                     if let Err(e) = outbox.complete(id) {
