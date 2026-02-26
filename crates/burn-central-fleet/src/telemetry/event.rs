@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::{logs::LogBatch, metrics::MetricBatch, unix_time_ms};
+use super::{
+    logs::LogBatch,
+    metrics::{MetricBatch, MetricDescriptorBatch},
+    unix_time_ms,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryEvent {
@@ -12,6 +16,7 @@ pub struct TelemetryEvent {
 #[serde(tag = "type", content = "payload")]
 pub enum TelemetryData {
     Metrics(MetricBatch),
+    MetricDescriptors(MetricDescriptorBatch),
     Logs(LogBatch),
 }
 
@@ -25,6 +30,10 @@ impl TelemetryEvent {
 
     pub fn metrics(payload: MetricBatch) -> Self {
         Self::new(TelemetryData::Metrics(payload))
+    }
+
+    pub fn metric_descriptors(payload: MetricDescriptorBatch) -> Self {
+        Self::new(TelemetryData::MetricDescriptors(payload))
     }
 
     pub fn logs(payload: LogBatch) -> Self {

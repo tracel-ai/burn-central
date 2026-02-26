@@ -51,7 +51,15 @@ impl MetricsEventCollector {
 
 impl Collector for MetricsEventCollector {
     fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
-        Ok(vec![TelemetryEvent::metrics(self.recorder.snapshot())])
+        let mut events = Vec::new();
+
+        let descriptor_delta = self.recorder.take_descriptor_delta();
+        if !descriptor_delta.descriptors.is_empty() {
+            events.push(TelemetryEvent::metric_descriptors(descriptor_delta));
+        }
+
+        events.push(TelemetryEvent::metrics(self.recorder.snapshot()));
+        Ok(events)
     }
 }
 

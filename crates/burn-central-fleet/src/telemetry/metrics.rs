@@ -1,17 +1,20 @@
 use serde::{Deserialize, Serialize};
 
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 struct InnerRegistry {
     registry: metrics_util::registry::Registry<metrics::Key, metrics_util::registry::AtomicStorage>,
+    descriptor_store: Mutex<DescriptorStore>,
 }
 
 impl InnerRegistry {
     fn new() -> Self {
         Self {
             registry: metrics_util::registry::Registry::new(metrics_util::registry::AtomicStorage),
+            descriptor_store: Mutex::new(DescriptorStore::default()),
         }
     }
 
@@ -71,6 +74,44 @@ impl InnerRegistry {
             histograms,
         }
     }
+
+    fn describe(
+        &self,
+        kind: MetricDescriptorKind,
+        key: metrics::KeyName,
+        unit: Option<metrics::Unit>,
+        description: metrics::SharedString,
+    ) {
+        let descriptor = MetricDescriptor {
+            name: key.as_str().to_string(),
+            kind,
+            unit: unit.map(|value| value.as_str().to_string()),
+            description: description.to_string(),
+        };
+        let descriptor_key = MetricDescriptorKey::new(descriptor.name.clone(), descriptor.kind);
+
+        let mut store_guard = self.descriptor_store.lock().unwrap();
+        let changed = store_guard.descriptors.get(&descriptor_key) != Some(&descriptor);
+        if changed {
+            store_guard
+                .descriptors
+                .insert(descriptor_key.clone(), descriptor);
+            store_guard.dirty.insert(descriptor_key);
+        }
+    }
+
+    fn take_descriptor_delta(&self) -> MetricDescriptorBatch {
+        let mut store_guard = self.descriptor_store.lock().unwrap();
+        let dirty_keys = store_guard.dirty.iter().cloned().collect::<Vec<_>>();
+        let mut descriptors = Vec::with_capacity(dirty_keys.len());
+        for key in dirty_keys {
+            if let Some(descriptor) = store_guard.descriptors.get(&key) {
+                descriptors.push(descriptor.clone());
+            }
+        }
+        store_guard.dirty.clear();
+        MetricDescriptorBatch { descriptors }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +123,11 @@ impl RecorderHandle {
     /// Produces a snapshot of recorded metrics at the current point in time.
     pub fn snapshot(&self) -> MetricBatch {
         self.registry.snapshot()
+    }
+
+    /// Drains newly registered or updated metric descriptors since the last call.
+    pub fn take_descriptor_delta(&self) -> MetricDescriptorBatch {
+        self.registry.take_descriptor_delta()
     }
 }
 
@@ -107,24 +153,30 @@ impl InMemoryMetricsRecorder {
 impl metrics::Recorder for InMemoryMetricsRecorder {
     fn describe_counter(
         &self,
-        _key: metrics::KeyName,
-        _unit: Option<metrics::Unit>,
-        _description: metrics::SharedString,
+        key: metrics::KeyName,
+        unit: Option<metrics::Unit>,
+        description: metrics::SharedString,
     ) {
+        self.registry
+            .describe(MetricDescriptorKind::Counter, key, unit, description);
     }
     fn describe_gauge(
         &self,
-        _key: metrics::KeyName,
-        _unit: Option<metrics::Unit>,
-        _description: metrics::SharedString,
+        key: metrics::KeyName,
+        unit: Option<metrics::Unit>,
+        description: metrics::SharedString,
     ) {
+        self.registry
+            .describe(MetricDescriptorKind::Gauge, key, unit, description);
     }
     fn describe_histogram(
         &self,
-        _key: metrics::KeyName,
-        _unit: Option<metrics::Unit>,
-        _description: metrics::SharedString,
+        key: metrics::KeyName,
+        unit: Option<metrics::Unit>,
+        description: metrics::SharedString,
     ) {
+        self.registry
+            .describe(MetricDescriptorKind::Histogram, key, unit, description);
     }
 
     fn register_counter(
@@ -153,6 +205,45 @@ pub struct MetricBatch {
     pub counters: Vec<MetricCounter>,
     pub gauges: Vec<MetricGauge>,
     pub histograms: Vec<MetricHistogram>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricDescriptorBatch {
+    pub descriptors: Vec<MetricDescriptor>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum MetricDescriptorKind {
+    Counter,
+    Gauge,
+    Histogram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MetricDescriptor {
+    pub name: String,
+    pub kind: MetricDescriptorKind,
+    pub unit: Option<String>,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct MetricDescriptorKey {
+    name: String,
+    kind: MetricDescriptorKind,
+}
+
+impl MetricDescriptorKey {
+    fn new(name: String, kind: MetricDescriptorKind) -> Self {
+        Self { name, kind }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DescriptorStore {
+    descriptors: BTreeMap<MetricDescriptorKey, MetricDescriptor>,
+    dirty: BTreeSet<MetricDescriptorKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -348,5 +439,75 @@ mod tests {
             .expect("second snapshot should still contain gauge");
         assert!((first_gauge.value - 64.0).abs() < f64::EPSILON);
         assert!((second_gauge.value - 64.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn descriptor_delta_collects_and_drains_descriptions() {
+        let recorder = InMemoryMetricsRecorder::new();
+        let handle = recorder.handle();
+
+        metrics::Recorder::describe_counter(
+            &recorder,
+            "fleet.requests.total".into(),
+            Some(metrics::Unit::Count),
+            "Total request count".into(),
+        );
+        metrics::Recorder::describe_histogram(
+            &recorder,
+            "fleet.request.duration".into(),
+            Some(metrics::Unit::Milliseconds),
+            "Request duration".into(),
+        );
+
+        let first = handle.take_descriptor_delta();
+        assert_eq!(first.descriptors.len(), 2);
+        assert!(first.descriptors.iter().any(|descriptor| {
+            descriptor.name == "fleet.requests.total"
+                && descriptor.kind == MetricDescriptorKind::Counter
+                && descriptor.unit.as_deref() == Some("count")
+                && descriptor.description == "Total request count"
+        }));
+        assert!(first.descriptors.iter().any(|descriptor| {
+            descriptor.name == "fleet.request.duration"
+                && descriptor.kind == MetricDescriptorKind::Histogram
+                && descriptor.unit.as_deref() == Some("milliseconds")
+                && descriptor.description == "Request duration"
+        }));
+
+        let second = handle.take_descriptor_delta();
+        assert!(second.descriptors.is_empty());
+    }
+
+    #[test]
+    fn descriptor_delta_only_emits_changes() {
+        let recorder = InMemoryMetricsRecorder::new();
+        let handle = recorder.handle();
+
+        metrics::Recorder::describe_counter(
+            &recorder,
+            "fleet.requests.total".into(),
+            Some(metrics::Unit::Count),
+            "Total requests".into(),
+        );
+        let _ = handle.take_descriptor_delta();
+
+        metrics::Recorder::describe_counter(
+            &recorder,
+            "fleet.requests.total".into(),
+            Some(metrics::Unit::Count),
+            "Total requests".into(),
+        );
+        let unchanged = handle.take_descriptor_delta();
+        assert!(unchanged.descriptors.is_empty());
+
+        metrics::Recorder::describe_counter(
+            &recorder,
+            "fleet.requests.total".into(),
+            Some(metrics::Unit::Count),
+            "Total requests seen".into(),
+        );
+        let changed = handle.take_descriptor_delta();
+        assert_eq!(changed.descriptors.len(), 1);
+        assert_eq!(changed.descriptors[0].description, "Total requests seen");
     }
 }
