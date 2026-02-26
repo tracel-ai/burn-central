@@ -72,7 +72,7 @@ impl LogIngress {
 pub struct TelemetryPipeline {
     fleet_key: String,
     log_ingress: Arc<LogIngress>,
-    batcher_handles: Vec<collector::CollectorHandle>,
+    collector_handles: Vec<collector::CollectorHandle>,
     shipper_handle: shipper::ShipperHandle,
 }
 
@@ -116,15 +116,15 @@ impl TelemetryPipeline {
         })?);
         let log_ingress = Arc::new(LogIngress::default());
 
-        let batcher_handles = vec![
+        let collector_handles = vec![
             collector::start(
-                "telemetry-batcher-metrics",
+                "telemetry-collector-metrics",
                 Arc::new(collector::MetricsEventCollector::new(recorder)),
                 outbox.clone(),
                 Duration::from_secs(5),
             ),
             collector::start(
-                "telemetry-batcher-logs",
+                "telemetry-collector-logs",
                 Arc::new(collector::LogsCollector::new(log_ingress.clone(), 256)),
                 outbox.clone(),
                 Duration::from_secs(2),
@@ -140,7 +140,7 @@ impl TelemetryPipeline {
         Ok(Self {
             fleet_key,
             log_ingress,
-            batcher_handles,
+            collector_handles,
             shipper_handle,
         })
     }
@@ -157,7 +157,7 @@ impl Drop for TelemetryPipeline {
     fn drop(&mut self) {
         PIPELINES.remove_pipeline(&self.fleet_key);
 
-        for handle in &mut self.batcher_handles {
+        for handle in &mut self.collector_handles {
             handle.shutdown();
         }
         self.shipper_handle.shutdown();

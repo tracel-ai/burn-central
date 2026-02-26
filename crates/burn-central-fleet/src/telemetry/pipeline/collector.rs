@@ -10,7 +10,7 @@ use super::super::{event::TelemetryEvent, logs::LogBatch, metrics::RecorderHandl
 
 use super::{LogIngress, Outbox};
 
-pub trait Batcher: Send + Sync {
+pub trait Collector: Send + Sync {
     fn collect(&self) -> Result<Vec<TelemetryEvent>, String>;
 }
 
@@ -49,7 +49,7 @@ impl MetricsEventCollector {
     }
 }
 
-impl Batcher for MetricsEventCollector {
+impl Collector for MetricsEventCollector {
     fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
         Ok(vec![TelemetryEvent::metrics(self.recorder.snapshot())])
     }
@@ -69,7 +69,7 @@ impl LogsCollector {
     }
 }
 
-impl Batcher for LogsCollector {
+impl Collector for LogsCollector {
     fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
         let entries = self.ingress.pop_batch(self.max_batch_entries);
 
@@ -83,7 +83,7 @@ impl Batcher for LogsCollector {
 
 pub fn start(
     name: &str,
-    batcher: Arc<dyn Batcher>,
+    collector: Arc<dyn Collector>,
     outbox: Arc<dyn Outbox>,
     interval: Duration,
 ) -> CollectorHandle {
@@ -93,10 +93,10 @@ pub fn start(
         .name(thread_name)
         .spawn(move || {
             loop {
-                match batcher.collect() {
-                    Ok(batches) => {
-                        for batch in batches {
-                            if let Err(e) = outbox.enqueue(batch) {
+                match collector.collect() {
+                    Ok(events) => {
+                        for event in events {
+                            if let Err(e) = outbox.enqueue(event) {
                                 tracing::error!("failed to enqueue telemetry event: {e}");
                             }
                         }
