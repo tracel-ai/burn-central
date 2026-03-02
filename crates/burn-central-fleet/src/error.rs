@@ -2,6 +2,8 @@ use crate::{model, state, telemetry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FleetError {
+    #[error("fleet registration failed: {0}")]
+    RegistrationFailed(String),
     #[error("fleet sync failed: {0}")]
     SyncFailed(String),
     #[error("fleet model download failed: {0}")]

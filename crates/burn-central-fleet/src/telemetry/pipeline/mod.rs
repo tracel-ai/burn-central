@@ -6,6 +6,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
+        RwLock,
     },
     time::Duration,
 };
@@ -80,8 +81,7 @@ pub struct TelemetryPipeline {
 impl TelemetryPipeline {
     pub fn get_or_init(
         fleet_key: String,
-        registration_token: String,
-        identity_key: String,
+        auth_token: Arc<RwLock<Option<String>>>,
         client: FleetClient,
         root_dir: PathBuf,
     ) -> Result<Arc<Self>, TelemetryPipelineError> {
@@ -96,8 +96,7 @@ impl TelemetryPipeline {
         let recorder = global_recorder_handle();
         let pipeline = Arc::new(Self::start(
             fleet_key.clone(),
-            registration_token,
-            identity_key,
+            auth_token,
             client,
             recorder,
             root_dir,
@@ -112,8 +111,7 @@ impl TelemetryPipeline {
 
     fn start(
         fleet_key: String,
-        registration_token: String,
-        identity_key: String,
+        auth_token: Arc<RwLock<Option<String>>>,
         client: FleetClient,
         recorder: RecorderHandle,
         root_dir: PathBuf,
@@ -147,11 +145,7 @@ impl TelemetryPipeline {
 
         let shipper_handle = shipper::start(
             outbox,
-            Arc::new(shipper::BurnCentralFleetShipperTransport::new(
-                registration_token,
-                identity_key,
-                client,
-            )),
+            Arc::new(shipper::BurnCentralFleetShipperTransport::new(auth_token, client)),
             Duration::from_secs(5),
         );
 

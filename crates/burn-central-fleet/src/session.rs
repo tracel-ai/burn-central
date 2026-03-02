@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use burn_central_client::{Env, FleetClient};
 use directories::{BaseDirs, ProjectDirs};
@@ -15,6 +18,7 @@ pub struct FleetDeviceSession {
     registration_token: FleetRegistrationToken,
     identity_key: String,
     state: state::FleetState,
+    telemetry_auth_token: Arc<RwLock<Option<String>>>,
     client: FleetClient,
     fleet_key: String,
     store: state::FleetLocalStateStore,
@@ -40,18 +44,24 @@ impl FleetDeviceSession {
         let client = FleetClient::new(env.clone());
         let store = state::FleetLocalStateStore::new(root_dir.clone());
         let identity_key = store.load_or_create_machine_identity_key()?;
+        let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
+        let telemetry_auth_token = Arc::new(RwLock::new(
+            state
+                .auth_token()
+                .filter(|auth| auth.is_valid())
+                .map(|auth| auth.token().to_string()),
+        ));
         let telemetry = TelemetryPipeline::get_or_init(
             fleet_key.clone(),
-            registration_token.clone(),
-            identity_key.clone(),
+            telemetry_auth_token.clone(),
             client.clone(),
             root_dir,
         )?;
-        let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
         let fleet_device = FleetDeviceSession {
             registration_token,
             identity_key,
             state,
+            telemetry_auth_token,
             client,
             fleet_key,
             store,
@@ -98,18 +108,48 @@ impl FleetDeviceSession {
             ?metadata,
             "syncing fleet device with fleet management service"
         );
+
+        let should_refresh_token = match self.state.auth_token() {
+            Some(auth) if auth.is_valid() => {
+                tracing::debug!(
+                    "using existing auth token with ttl {} seconds",
+                    auth.expires_in_seconds().unwrap()
+                );
+                false
+            }
+            Some(_) => {
+                tracing::info!(
+                    "existing auth token expired, requesting a new one from fleet management service"
+                );
+                true
+            }
+            None => {
+                tracing::info!(
+                    "no existing auth token, requesting new one from fleet management service"
+                );
+                true
+            }
+        };
+
+        if should_refresh_token {
+            self.refresh_auth_token(metadata.clone())?;
+            tracing::info!("successfully refreshed auth token");
+        }
+        let auth_token = self
+            .state
+            .auth_token()
+            .ok_or_else(|| FleetError::SyncFailed("missing auth token after refresh".to_string()))?
+            .token()
+            .to_string();
+
         let snapshot = self
             .client
-            .sync(
-                self.registration_token.clone(),
-                self.identity_key.clone(),
-                metadata,
-            )
+            .sync(&auth_token, metadata)
             .map_err(|e| FleetError::SyncFailed(e.to_string()))?;
 
         let download = self
             .client
-            .model_download(self.registration_token.clone(), self.identity_key.clone())
+            .model_download(&auth_token)
             .map_err(|e| FleetError::DownloadFailed(e.to_string()))?;
 
         model::ensure_cached_model(
@@ -128,6 +168,28 @@ impl FleetDeviceSession {
         self.store
             .save_fleet_state(&self.fleet_key, &self.state)
             .map_err(FleetError::from)
+    }
+
+    fn refresh_auth_token(&mut self, metadata: Option<DeviceMetadata>) -> Result<(), FleetError> {
+        let auth_response = self
+            .client
+            .register(
+                self.registration_token.clone(),
+                self.identity_key.clone(),
+                metadata,
+            )
+            .map_err(|e| FleetError::RegistrationFailed(e.to_string()))?;
+
+        self.state
+            .set_auth_token(auth_response.access_token, auth_response.expires_in_seconds);
+
+        let mut telemetry_auth_token = self
+            .telemetry_auth_token
+            .write()
+            .map_err(|_| FleetError::SyncFailed("telemetry auth token lock poisoned".to_string()))?;
+        *telemetry_auth_token = self.state.auth_token().map(|auth| auth.token().to_string());
+
+        Ok(())
     }
 }
 

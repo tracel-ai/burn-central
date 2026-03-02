@@ -7,9 +7,48 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthToken {
+    /// The authentication token string to be used in requests to the fleet management service.
+    token: String,
+    /// The time-to-live of the authentication token, in seconds.
+    ttl_seconds: u64,
+    /// The timestamp of when the authentication token was last updated.
+    updated_at: String,
+}
+
+impl AuthToken {
+    /// Check if the authentication token is still valid based on its TTL and last updated timestamp.
+    pub fn is_valid(&self) -> bool {
+        let updated_at = match chrono::DateTime::parse_from_rfc3339(&self.updated_at) {
+            Ok(dt) => dt,
+            Err(_) => return false,
+        };
+
+        let expires_at = updated_at + chrono::Duration::seconds(self.ttl_seconds as i64);
+        let now = chrono::Utc::now();
+        now < expires_at
+    }
+
+    /// Calculate the number of seconds until the authentication token expires, or return None if the timestamp is invalid.
+    pub fn expires_in_seconds(&self) -> Option<i64> {
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&self.updated_at).ok()?;
+        let expires_at = updated_at + chrono::Duration::seconds(self.ttl_seconds as i64);
+        let now = chrono::Utc::now().with_timezone(&updated_at.timezone());
+        Some((expires_at - now).num_seconds())
+    }
+
+    /// Get a reference to the authentication token string.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+}
+
 /// The state of a device in the fleet management system, as stored on the device and synced with the fleet management service.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FleetState {
+    /// The current authentication token for communicating with the fleet management service, if any.
+    auth: Option<AuthToken>,
     /// The timestamp of the last update received by the device.
     updated_at: String,
     /// The id of the model version currently active on the device. Should be updated by the device when a new model version is activated.
@@ -21,6 +60,7 @@ pub struct FleetState {
 impl Default for FleetState {
     fn default() -> Self {
         Self {
+            auth: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
             active_model_version_id: String::new(),
             runtime_config: serde_json::json!({}),
@@ -29,6 +69,15 @@ impl Default for FleetState {
 }
 
 impl FleetState {
+    pub fn set_auth_token(&mut self, token: String, ttl_seconds: u64) {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.auth = Some(AuthToken {
+            token,
+            ttl_seconds,
+            updated_at: now,
+        });
+    }
+
     pub fn update(&mut self, model_version_id: String, runtime_config: serde_json::Value) {
         self.updated_at = chrono::Utc::now().to_rfc3339();
         self.active_model_version_id = model_version_id;
@@ -42,7 +91,12 @@ impl FleetState {
     pub fn runtime_config(&self) -> &serde_json::Value {
         &self.runtime_config
     }
+
+    pub fn auth_token(&self) -> Option<&AuthToken> {
+        self.auth.as_ref()
+    }
 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct IdentityState {
     identity_key: String,
@@ -186,6 +240,11 @@ mod tests {
 
         let fleet_key = fleet_key_from_registration_token("reg-token");
         let state = FleetState {
+            auth: Some(AuthToken {
+                token: "auth-token".to_string(),
+                ttl_seconds: 3600,
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             active_model_version_id: "model-v1".to_string(),
             runtime_config: serde_json::json!({ "sample_rate": 0.2 }),

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use burn_central_client::FleetClient;
@@ -20,22 +20,13 @@ pub trait ShipperTransport: Send + Sync {
 }
 
 pub struct BurnCentralFleetShipperTransport {
-    registration_token: String,
-    identity_key: String,
+    auth_token: Arc<RwLock<Option<String>>>,
     client: FleetClient,
 }
 
 impl BurnCentralFleetShipperTransport {
-    pub fn new(
-        registration_token: impl Into<String>,
-        identity_key: impl Into<String>,
-        client: FleetClient,
-    ) -> Self {
-        Self {
-            registration_token: registration_token.into(),
-            identity_key: identity_key.into(),
-            client,
-        }
+    pub fn new(auth_token: Arc<RwLock<Option<String>>>, client: FleetClient) -> Self {
+        Self { auth_token, client }
     }
 }
 
@@ -124,9 +115,15 @@ impl ShipperTransport for BurnCentralFleetShipperTransport {
             metrics,
             logs,
         };
+        let auth_token = self
+            .auth_token
+            .read()
+            .map_err(|_| "telemetry auth token lock poisoned".to_string())?
+            .clone()
+            .ok_or_else(|| "missing auth token for telemetry ingestion".to_string())?;
 
         self.client
-            .ingest_telemetry(&self.registration_token, &self.identity_key, telemetry)
+            .ingest_telemetry(auth_token, telemetry)
             .map_err(|e| format!("failed to send telemetry events to Burn Central Fleet: {e}"))
     }
 }
