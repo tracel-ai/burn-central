@@ -58,7 +58,11 @@ impl Collector for MetricsEventCollector {
             events.push(TelemetryEvent::metric_descriptors(descriptor_delta));
         }
 
-        events.push(TelemetryEvent::metrics(self.recorder.snapshot()));
+        let snapshot = self.recorder.snapshot();
+        if !snapshot.is_empty() {
+            events.push(TelemetryEvent::metrics(snapshot));
+        }
+
         Ok(events)
     }
 }
@@ -125,5 +129,108 @@ pub fn start(
     CollectorHandle {
         join_handle: Some(join_handle),
         shutdown_tx: Some(shutdown_tx),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use crate::telemetry::pipeline::OutboxId;
+
+    use super::*;
+
+    #[derive(Debug, Default)]
+    struct OutboxMock {
+        enqueued_events: Mutex<Vec<TelemetryEvent>>,
+    }
+
+    impl OutboxMock {
+        fn empty() -> Self {
+            Self::default()
+        }
+
+        fn len(&self) -> usize {
+            let guard = self.enqueued_events.lock().unwrap();
+            guard.len()
+        }
+
+        fn is_empty(&self) -> bool {
+            let guard = self.enqueued_events.lock().unwrap();
+            guard.is_empty()
+        }
+    }
+
+    impl Outbox for OutboxMock {
+        fn enqueue(&self, data: TelemetryEvent) -> Result<(), String> {
+            let mut guard = self.enqueued_events.lock().unwrap();
+            guard.push(data);
+            Ok(())
+        }
+
+        fn claim(&self, _count: usize) -> Result<Option<Vec<(OutboxId, TelemetryEvent)>>, String> {
+            Ok(None)
+        }
+
+        fn complete(&self, _id: OutboxId) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn fail(&self, _id: OutboxId, _error: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TestCollector {
+        events_to_return: Mutex<Vec<TelemetryEvent>>,
+    }
+
+    impl Collector for TestCollector {
+        fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
+            let mut guard = self.events_to_return.lock().unwrap();
+            Ok(guard.drain(..).collect())
+        }
+    }
+
+    #[test]
+    fn test_collector_enqueues_events() {
+        let outbox = Arc::new(OutboxMock::empty());
+        let collector = Arc::new(TestCollector {
+            events_to_return: Mutex::new(vec![
+                TelemetryEvent::logs(LogBatch { entries: vec![] }),
+                TelemetryEvent::logs(LogBatch { entries: vec![] }),
+            ]),
+        });
+
+        let _handle = start(
+            "test_collector_enqueues_events",
+            collector,
+            outbox.clone(),
+            Duration::from_millis(0),
+        );
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        assert_eq!(outbox.len(), 2, "should have enqueued two events");
+    }
+
+    #[test]
+    fn test_collector_does_not_enqueue_empty_batch() {
+        let outbox = Arc::new(OutboxMock::empty());
+        let collector = Arc::new(TestCollector {
+            events_to_return: Mutex::new(vec![]),
+        });
+
+        let _handle = start(
+            "test_collector_handles_empty_batch",
+            collector,
+            outbox.clone(),
+            Duration::from_millis(0),
+        );
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        assert!(outbox.is_empty(), "should not have enqueued any events");
     }
 }

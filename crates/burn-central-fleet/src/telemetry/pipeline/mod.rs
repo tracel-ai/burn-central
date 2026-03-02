@@ -1,3 +1,4 @@
+use burn_central_client::FleetClient;
 use crossbeam_queue::SegQueue;
 
 use std::{
@@ -30,7 +31,7 @@ pub type OutboxId = i64;
 
 pub trait Outbox: Send + Sync {
     fn enqueue(&self, data: TelemetryEvent) -> Result<(), String>;
-    fn claim(&self, count: usize) -> Result<Vec<(OutboxId, TelemetryEvent)>, String>;
+    fn claim(&self, count: usize) -> Result<Option<Vec<(OutboxId, TelemetryEvent)>>, String>;
     fn complete(&self, id: OutboxId) -> Result<(), String>;
     fn fail(&self, id: OutboxId, error: &str) -> Result<(), String>;
 }
@@ -79,6 +80,9 @@ pub struct TelemetryPipeline {
 impl TelemetryPipeline {
     pub fn get_or_init(
         fleet_key: String,
+        registration_token: String,
+        identity_key: String,
+        client: FleetClient,
         root_dir: PathBuf,
     ) -> Result<Arc<Self>, TelemetryPipelineError> {
         global_init().map_err(|e| {
@@ -90,7 +94,14 @@ impl TelemetryPipeline {
         }
 
         let recorder = global_recorder_handle();
-        let pipeline = Arc::new(Self::start(fleet_key.clone(), recorder, root_dir)?);
+        let pipeline = Arc::new(Self::start(
+            fleet_key.clone(),
+            registration_token,
+            identity_key,
+            client,
+            recorder,
+            root_dir,
+        )?);
         PIPELINES.add_pipeline(fleet_key, &pipeline);
         Ok(pipeline)
     }
@@ -101,6 +112,9 @@ impl TelemetryPipeline {
 
     fn start(
         fleet_key: String,
+        registration_token: String,
+        identity_key: String,
+        client: FleetClient,
         recorder: RecorderHandle,
         root_dir: PathBuf,
     ) -> Result<Self, TelemetryPipelineError> {
@@ -133,7 +147,11 @@ impl TelemetryPipeline {
 
         let shipper_handle = shipper::start(
             outbox,
-            Arc::new(shipper::NoopShipperTransport),
+            Arc::new(shipper::BurnCentralFleetShipperTransport::new(
+                registration_token,
+                identity_key,
+                client,
+            )),
             Duration::from_secs(5),
         );
 

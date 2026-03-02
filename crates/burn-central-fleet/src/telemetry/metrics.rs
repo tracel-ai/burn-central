@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 struct InnerRegistry {
     registry: metrics_util::registry::Registry<metrics::Key, metrics_util::registry::AtomicStorage>,
     descriptor_store: Mutex<DescriptorStore>,
+    metric_delta_store: Mutex<MetricDeltaStore>,
 }
 
 impl InnerRegistry {
@@ -15,6 +16,7 @@ impl InnerRegistry {
         Self {
             registry: metrics_util::registry::Registry::new(metrics_util::registry::AtomicStorage),
             descriptor_store: Mutex::new(DescriptorStore::default()),
+            metric_delta_store: Mutex::new(MetricDeltaStore::default()),
         }
     }
 
@@ -36,24 +38,38 @@ impl InnerRegistry {
 
     fn snapshot(&self) -> MetricBatch {
         let mut counters = Vec::new();
-        self.registry.visit_counters(|key, counter| {
-            counters.push(MetricCounter {
-                key: MetricKey::from_key(key),
-                value: counter.load(Ordering::Acquire),
-            });
-        });
-        counters.sort_by(|a, b| a.key.cmp(&b.key));
-
         let mut gauges = Vec::new();
-        self.registry.visit_gauges(|key, gauge| {
-            let value = f64::from_bits(gauge.load(Ordering::Acquire));
-            if value.is_finite() {
-                gauges.push(MetricGauge {
-                    key: MetricKey::from_key(key),
-                    value,
-                });
-            }
-        });
+        {
+            let mut delta_store = self.metric_delta_store.lock().unwrap();
+
+            self.registry.visit_counters(|key, counter| {
+                let key = MetricKey::from_key(key);
+                let value = counter.load(Ordering::Acquire);
+                let previous = delta_store.counter_values.insert(key.clone(), value);
+                let delta = previous.map_or(value, |last_value| value.saturating_sub(last_value));
+                if delta > 0 {
+                    counters.push(MetricCounter { key, value: delta });
+                }
+            });
+
+            self.registry.visit_gauges(|key, gauge| {
+                let value = f64::from_bits(gauge.load(Ordering::Acquire));
+                if !value.is_finite() {
+                    return;
+                }
+
+                let key = MetricKey::from_key(key);
+                let previous = delta_store.gauge_values.get(&key).copied();
+                if previous != Some(value) {
+                    gauges.push(MetricGauge {
+                        key: key.clone(),
+                        value,
+                    });
+                    delta_store.gauge_values.insert(key, value);
+                }
+            });
+        }
+        counters.sort_by(|a, b| a.key.cmp(&b.key));
         gauges.sort_by(|a, b| a.key.cmp(&b.key));
 
         let mut histograms = Vec::new();
@@ -120,7 +136,9 @@ pub struct RecorderHandle {
 }
 
 impl RecorderHandle {
-    /// Produces a snapshot of recorded metrics at the current point in time.
+    /// Produces a snapshot of recorded metrics.
+    /// Counters are emitted as positive deltas since the prior snapshot.
+    /// Gauges are emitted only when their value changes.
     pub fn snapshot(&self) -> MetricBatch {
         self.registry.snapshot()
     }
@@ -207,6 +225,12 @@ pub struct MetricBatch {
     pub histograms: Vec<MetricHistogram>,
 }
 
+impl MetricBatch {
+    pub fn is_empty(&self) -> bool {
+        self.counters.is_empty() && self.gauges.is_empty() && self.histograms.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricDescriptorBatch {
     pub descriptors: Vec<MetricDescriptor>,
@@ -244,6 +268,12 @@ impl MetricDescriptorKey {
 struct DescriptorStore {
     descriptors: BTreeMap<MetricDescriptorKey, MetricDescriptor>,
     dirty: BTreeSet<MetricDescriptorKey>,
+}
+
+#[derive(Debug, Default)]
+struct MetricDeltaStore {
+    counter_values: BTreeMap<MetricKey, u64>,
+    gauge_values: BTreeMap<MetricKey, f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -293,17 +323,14 @@ pub struct MetricHistogram {
     pub key: MetricKey,
     pub count: u64,
     pub sum: f64,
-    pub min: f64,
-    pub max: f64,
-    pub mean: f64,
+    pub buckets: Vec<(f64, u64)>,
 }
 
 impl MetricHistogram {
     fn from_samples(key: MetricKey, samples: Vec<f64>) -> Option<Self> {
         let mut count = 0u64;
         let mut sum = 0.0;
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
+        let mut finite_samples = Vec::new();
 
         for sample in samples {
             if !sample.is_finite() {
@@ -312,21 +339,34 @@ impl MetricHistogram {
 
             count += 1;
             sum += sample;
-            min = min.min(sample);
-            max = max.max(sample);
+            finite_samples.push(sample);
         }
 
         if count == 0 {
             return None;
         }
 
+        finite_samples.sort_by(|a, b| a.total_cmp(b));
+        let mut buckets = Vec::new();
+        let mut cumulative_count = 0u64;
+
+        // Build cumulative buckets keyed by each observed value.
+        for sample in finite_samples {
+            cumulative_count += 1;
+            if let Some((upper_bound, bucket_count)) = buckets.last_mut() {
+                if *upper_bound == sample {
+                    *bucket_count = cumulative_count;
+                    continue;
+                }
+            }
+            buckets.push((sample, cumulative_count));
+        }
+
         Some(Self {
             key,
             count,
             sum,
-            min,
-            max,
-            mean: sum / count as f64,
+            buckets,
         })
     }
 }
@@ -370,9 +410,7 @@ mod tests {
             .expect("histogram metric should exist");
         assert_eq!(histogram.count, 2);
         assert!((histogram.sum - 6.0).abs() < f64::EPSILON);
-        assert!((histogram.min - 2.0).abs() < f64::EPSILON);
-        assert!((histogram.max - 4.0).abs() < f64::EPSILON);
-        assert!((histogram.mean - 3.0).abs() < f64::EPSILON);
+        assert_eq!(histogram.buckets, vec![(2.0, 1), (4.0, 2)]);
     }
 
     #[test]
@@ -402,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_keeps_counter_and_gauge_values_between_batches() {
+    fn snapshot_emits_counter_deltas_and_gauge_changes_only() {
         let recorder = InMemoryMetricsRecorder::new();
         let handle = recorder.handle();
 
@@ -419,26 +457,43 @@ mod tests {
             .iter()
             .find(|metric| metric.key.name == "fleet.counter.persist")
             .expect("first snapshot should contain counter");
-        let second_counter = second
-            .counters
-            .iter()
-            .find(|metric| metric.key.name == "fleet.counter.persist")
-            .expect("second snapshot should still contain counter");
         assert_eq!(first_counter.value, 5);
-        assert_eq!(second_counter.value, 5);
+        assert!(second.counters.is_empty());
 
         let first_gauge = first
             .gauges
             .iter()
             .find(|metric| metric.key.name == "fleet.gauge.persist")
             .expect("first snapshot should contain gauge");
-        let second_gauge = second
+        assert!((first_gauge.value - 64.0).abs() < f64::EPSILON);
+        assert!(second.gauges.is_empty());
+
+        metrics::with_local_recorder(&recorder, || {
+            metrics::counter!("fleet.counter.persist", "kind" => "request").increment(2);
+            metrics::gauge!("fleet.gauge.persist", "kind" => "memory").set(64.0);
+        });
+
+        let third = handle.snapshot();
+        let third_counter = third
+            .counters
+            .iter()
+            .find(|metric| metric.key.name == "fleet.counter.persist")
+            .expect("third snapshot should contain only counter delta");
+        assert_eq!(third_counter.value, 2);
+        assert!(third.gauges.is_empty());
+
+        metrics::with_local_recorder(&recorder, || {
+            metrics::gauge!("fleet.gauge.persist", "kind" => "memory").set(96.0);
+        });
+
+        let fourth = handle.snapshot();
+        assert!(fourth.counters.is_empty());
+        let fourth_gauge = fourth
             .gauges
             .iter()
             .find(|metric| metric.key.name == "fleet.gauge.persist")
-            .expect("second snapshot should still contain gauge");
-        assert!((first_gauge.value - 64.0).abs() < f64::EPSILON);
-        assert!((second_gauge.value - 64.0).abs() < f64::EPSILON);
+            .expect("fourth snapshot should contain changed gauge");
+        assert!((fourth_gauge.value - 96.0).abs() < f64::EPSILON);
     }
 
     #[test]

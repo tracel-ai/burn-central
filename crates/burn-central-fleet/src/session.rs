@@ -39,9 +39,14 @@ impl FleetDeviceSession {
 
         let client = FleetClient::new(env.clone());
         let store = state::FleetLocalStateStore::new(root_dir.clone());
-        let telemetry = TelemetryPipeline::get_or_init(fleet_key.clone(), root_dir)?;
-
         let identity_key = store.load_or_create_machine_identity_key()?;
+        let telemetry = TelemetryPipeline::get_or_init(
+            fleet_key.clone(),
+            registration_token.clone(),
+            identity_key.clone(),
+            client.clone(),
+            root_dir,
+        )?;
         let state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
         let fleet_device = FleetDeviceSession {
             registration_token,

@@ -86,9 +86,9 @@ impl Outbox for WalOutbox {
         Ok(())
     }
 
-    fn claim(&self, count: usize) -> Result<Vec<(OutboxId, TelemetryEvent)>, String> {
+    fn claim(&self, count: usize) -> Result<Option<Vec<(OutboxId, TelemetryEvent)>>, String> {
         if count == 0 {
-            return Ok(Vec::new());
+            return Ok(None);
         }
 
         let mut inner_guard = self
@@ -104,6 +104,10 @@ impl Outbox for WalOutbox {
             .take(count)
             .collect::<Vec<_>>();
 
+        if ids.is_empty() {
+            return Ok(None);
+        }
+
         let mut claimed = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(event) = inner_guard.state.pending.remove(&id) {
@@ -112,7 +116,7 @@ impl Outbox for WalOutbox {
             }
         }
 
-        Ok(claimed)
+        Ok(Some(claimed))
     }
 
     fn complete(&self, id: OutboxId) -> Result<(), String> {
@@ -248,7 +252,10 @@ mod tests {
             .enqueue(sample_event())
             .expect("enqueue should write wal entry");
 
-        let first_claim = outbox.claim(10).expect("claim should return queued row");
+        let first_claim = outbox
+            .claim(10)
+            .expect("claim should return queued row")
+            .expect("claim should return Some for available rows");
         assert_eq!(first_claim.len(), 1);
         let id = first_claim[0].0;
 
@@ -258,7 +265,8 @@ mod tests {
 
         let second_claim = outbox
             .claim(10)
-            .expect("failed row should be claimable again");
+            .expect("failed row should be claimable again")
+            .expect("claim should return Some for available rows");
         assert_eq!(second_claim.len(), 1);
         assert_eq!(second_claim[0].0, id);
 
@@ -267,7 +275,7 @@ mod tests {
             .expect("complete should remove claimed row");
 
         let final_claim = outbox.claim(10).expect("claim should still succeed");
-        assert!(final_claim.is_empty());
+        assert!(final_claim.is_none());
 
         drop(outbox);
         remove_dir(&dir);
@@ -284,14 +292,18 @@ mod tests {
                 .enqueue(sample_event())
                 .expect("enqueue should write wal entry");
 
-            let claimed = outbox.claim(1).expect("claim should return queued row");
+            let claimed = outbox
+                .claim(1)
+                .expect("claim should return queued row")
+                .expect("claim should return Some for available rows");
             assert_eq!(claimed.len(), 1);
         }
 
         let outbox = WalOutbox::new(wal_path).expect("wal outbox should reopen");
         let recovered = outbox
             .claim(1)
-            .expect("claimed row should be available again after restart");
+            .expect("claimed row should be available again after restart")
+            .expect("claim should return Some for available rows");
         assert_eq!(recovered.len(), 1);
 
         drop(outbox);
@@ -309,7 +321,10 @@ mod tests {
                 .enqueue(sample_event())
                 .expect("enqueue should write wal entry");
 
-            let claimed = outbox.claim(1).expect("claim should return queued row");
+            let claimed = outbox
+                .claim(1)
+                .expect("claim should return queued row")
+                .expect("claim should return Some for available rows");
             assert_eq!(claimed.len(), 1);
             outbox
                 .complete(claimed[0].0)
@@ -318,7 +333,23 @@ mod tests {
 
         let outbox = WalOutbox::new(wal_path).expect("wal outbox should reopen");
         let claimed = outbox.claim(1).expect("claim should succeed after restart");
-        assert!(claimed.is_empty());
+        assert!(claimed.is_none());
+
+        drop(outbox);
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn wal_outbox_returns_none_on_claim_when_no_rows_available() {
+        let dir = temp_dir("empty");
+        let wal_path = dir.join("outbox.wal");
+        let outbox = WalOutbox::new(wal_path).expect("wal outbox should initialize");
+
+        let claim = outbox.claim(10).expect("claim should succeed");
+        assert!(
+            claim.is_none(),
+            "claim should return None when no rows available"
+        );
 
         drop(outbox);
         remove_dir(&dir);

@@ -9,28 +9,6 @@ use std::sync::Mutex;
 
 use super::{dispatch_log_record, unix_time_ms};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-impl From<&tracing::Level> for LogLevel {
-    fn from(level: &tracing::Level) -> Self {
-        match *level {
-            tracing::Level::TRACE => Self::Trace,
-            tracing::Level::DEBUG => Self::Debug,
-            tracing::Level::INFO => Self::Info,
-            tracing::Level::WARN => Self::Warn,
-            tracing::Level::ERROR => Self::Error,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogField {
     pub key: String,
@@ -41,7 +19,7 @@ pub struct LogField {
 pub struct LogRecord {
     pub timestamp_unix_ms: u64,
     pub fleet_key: String,
-    pub level: LogLevel,
+    pub level: String,
     pub message: String,
     pub fields: Vec<LogField>,
 }
@@ -49,7 +27,7 @@ pub struct LogRecord {
 impl LogRecord {
     pub fn new(
         fleet_key: String,
-        level: LogLevel,
+        level: String,
         message: impl Into<String>,
         fields: Vec<LogField>,
     ) -> Self {
@@ -224,7 +202,7 @@ where
 
         dispatch_log_record(LogRecord::new(
             fleet_key,
-            LogLevel::from(metadata.level()),
+            metadata.level().to_string().to_ascii_lowercase(),
             message,
             inherited_fields,
         ));
@@ -276,7 +254,7 @@ mod tests {
         assert_eq!(records.len(), 1);
         let record = &records[0];
         assert_eq!(record.fleet_key, "fleet-a");
-        assert!(matches!(record.level, LogLevel::Info));
+        assert_eq!(record.level, "info");
         assert_eq!(record.message, "inference finished");
         assert!(record.timestamp_unix_ms > 0);
         assert_eq!(
