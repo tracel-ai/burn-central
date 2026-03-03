@@ -1,5 +1,5 @@
 use crate::error::RuntimeError;
-use crate::inference::{RoutineIn, RoutineInput};
+use crate::input::{RoutineIn, RoutineInput};
 use crate::output::RoutineOutput;
 use crate::params::RoutineParam;
 use crate::type_name::fn_type_name;

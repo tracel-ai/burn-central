@@ -1,0 +1,19 @@
+use crate::{model, state, telemetry};
+
+#[derive(Debug, thiserror::Error)]
+pub enum FleetError {
+    #[error("fleet registration failed: {0}")]
+    RegistrationFailed(String),
+    #[error("fleet sync failed: {0}")]
+    SyncFailed(String),
+    #[error("fleet model download failed: {0}")]
+    DownloadFailed(String),
+    #[error("failed to determine cache directory")]
+    CacheDirUnavailable,
+    #[error(transparent)]
+    State(#[from] state::FleetStateStoreError),
+    #[error(transparent)]
+    Model(#[from] model::ModelCacheError),
+    #[error("telemetry pipeline failed: {0}")]
+    TelemetryInitFailed(#[from] telemetry::TelemetryPipelineError),
+}

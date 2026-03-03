@@ -182,13 +182,6 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    if procedure_type == ProcedureType::Inference {
-        errors.push(Error::new_spanned(
-            args.first().unwrap().path(),
-            "Inference procedures are not supported yet. Please use training procedures.",
-        ));
-    }
-
     let maybe_registered_name = get_string_arg(&args, "name", &mut errors);
 
     if let Some(name) = &maybe_registered_name {
@@ -225,7 +218,14 @@ pub fn register(args: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
         ProcedureType::Inference => {
-            quote! {}
+            quote! {
+                #[doc(hidden)]
+                pub fn #builder_fn_name<B: burn::prelude::Backend>(
+                    reg: &mut burn_central::runtime::inference::InferenceRegistry<B>,
+                ) {
+                    reg.infer(#registered_name_str, #fn_name);
+                }
+            }
         }
     };
 

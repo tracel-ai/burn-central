@@ -4,7 +4,7 @@ use burn::tensor::backend::AutodiffBackend;
 
 use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
-use crate::params::args::{ExperimentArgs, deserialize_and_merge_with_default};
+use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use crate::telemetry;
 use burn_central_core::BurnCentral;
@@ -25,7 +25,11 @@ pub struct ExecutionContext<B: Backend> {
 }
 
 impl<B: Backend> ExecutionContext<B> {
-    pub fn use_merged_args<A: ExperimentArgs>(&self) -> A {
+    /// Retrieve args merged on top of `A::default()`.
+    ///
+    /// This powers the `Args<A>` routine extractor for training routines.
+    /// If deserialization fails, defaults are returned.
+    pub fn use_merged_args<A: LaunchArgs>(&self) -> A {
         let args = match &self.args_override {
             Some(json) => deserialize_and_merge_with_default(json).unwrap_or_default(),
             None => A::default(),

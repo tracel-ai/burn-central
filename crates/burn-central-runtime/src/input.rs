@@ -1,4 +1,4 @@
-use crate::{inference::In, routine::Routine};
+use crate::routine::Routine;
 use variadics_please::all_tuples;
 
 pub type RoutineIn<'a, Ctx, S> = <<S as Routine<Ctx>>::In as RoutineInput>::Inner<'a>;
@@ -37,12 +37,3 @@ macro_rules! impl_routine_input_tuple {
 }
 
 all_tuples!(impl_routine_input_tuple, 0, 8, I);
-
-impl<T: 'static> RoutineInput for In<T> {
-    type Param<'i> = In<T>;
-    type Inner<'i> = T;
-
-    fn wrap(this: Self::Inner<'_>) -> Self::Param<'_> {
-        In(this)
-    }
-}

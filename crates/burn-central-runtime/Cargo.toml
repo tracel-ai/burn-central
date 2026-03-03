@@ -14,6 +14,8 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 burn-central-core.workspace = true
+burn-central-fleet.workspace = true
+burn-central-inference.workspace = true
 burn.workspace = true
 thiserror.workspace = true
 variadics_please.workspace = true
@@ -24,7 +26,6 @@ tynm.workspace = true
 derive_more.workspace = true
 clap.workspace = true
 log.workspace = true
-crossbeam.workspace = true
 serde.workspace = true
 json-patch.workspace = true
 tracing.workspace = true

@@ -6,8 +6,8 @@ mod schemas;
 
 pub use crate::client::*;
 
-#[doc(hidden)]
 pub type BurnCentralCredentials = burn_central_client::BurnCentralCredentials;
+pub type Env = burn_central_client::Env;
 
 pub mod artifacts;
 pub mod bundle;

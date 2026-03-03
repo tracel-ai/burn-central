@@ -30,8 +30,7 @@
 //!
 //!  ### Macros
 //!  For the `macros`, you only need to know about the register macro that you will use to mark
-//!  your training functions so they can be found by Burn Central CLI. Right now we only support
-//!  the training registration but inference will come soon. Here is
+//!  your training or inference functions so they can be found by Burn Central CLI. Here is
 //!
 //!  #### Example
 //!  ```ignore
@@ -57,3 +56,11 @@ pub use burn_central_macros as macros;
 /// Burn Central Macros. It basically form a wrapper crate that use your declare functions.
 #[doc(inline)]
 pub use burn_central_runtime as runtime;
+
+/// Inference contracts and adapters.
+#[doc(inline)]
+pub use burn_central_inference as inference;
+
+/// On-device fleet synchronization helpers.
+#[doc(inline)]
+pub use burn_central_fleet as fleet;
