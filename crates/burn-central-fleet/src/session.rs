@@ -183,10 +183,9 @@ impl FleetDeviceSession {
         self.state
             .set_auth_token(auth_response.access_token, auth_response.expires_in_seconds);
 
-        let mut telemetry_auth_token = self
-            .telemetry_auth_token
-            .write()
-            .map_err(|_| FleetError::SyncFailed("telemetry auth token lock poisoned".to_string()))?;
+        let mut telemetry_auth_token = self.telemetry_auth_token.write().map_err(|_| {
+            FleetError::SyncFailed("telemetry auth token lock poisoned".to_string())
+        })?;
         *telemetry_auth_token = self.state.auth_token().map(|auth| auth.token().to_string());
 
         Ok(())

@@ -60,7 +60,6 @@ opentelemetry = { version = "0.31.0", features = ["metrics"] }
 burn-central-client = { version = "0.5.0", path = "../burn-central-client/burn-central-client" }
 # burn-central-client = "0.5.0"
 
-burn-central-registry = { path = "crates/burn-central-registry", version = "0.5.0" }
 
 ## Crate
 burn-central-core = { path = "crates/burn-central-core", version = "0.5.0" }
@@ -68,6 +67,8 @@ burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.5.0"
 burn-central-macros = { path = "crates/burn-central-macros", version = "0.5.0" }
 burn-central-inference = { path = "crates/burn-central-inference", version = "0.5.0" }
 burn-central-fleet = { path = "crates/burn-central-fleet", version = "0.5.0" }
+burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.5.0" }
+burn-central-registry = { path = "crates/burn-central-registry", version = "0.5.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.5.0"

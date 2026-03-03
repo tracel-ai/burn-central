@@ -4,9 +4,8 @@ use crossbeam_queue::SegQueue;
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicUsize, Ordering},
-        RwLock,
     },
     time::Duration,
 };
@@ -145,7 +144,9 @@ impl TelemetryPipeline {
 
         let shipper_handle = shipper::start(
             outbox,
-            Arc::new(shipper::BurnCentralFleetShipperTransport::new(auth_token, client)),
+            Arc::new(shipper::BurnCentralFleetShipperTransport::new(
+                auth_token, client,
+            )),
             Duration::from_secs(5),
         );
 

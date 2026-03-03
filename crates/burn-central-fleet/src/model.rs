@@ -3,8 +3,8 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+use burn_central_artifact::{ArtifactDownloadFile, DownloadError, download_artifacts_to_dir};
 use burn_central_client::fleet::response::FleetModelDownloadResponse;
-use burn_central_registry::{ArtifactDownloadFile, download_artifacts_to_dir};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -20,7 +20,7 @@ pub enum ModelCacheError {
     #[error("cached model file missing: {0}")]
     MissingCachedFile(String),
     #[error(transparent)]
-    Registry(#[from] burn_central_registry::RegistryError),
+    Registry(#[from] DownloadError),
 }
 
 /// Source information for loading an assigned model.
