@@ -18,8 +18,12 @@ pub struct WalOutbox {
 
 #[derive(Debug)]
 struct WalOutboxInner {
-    writer: BufWriter<File>,
+    path: PathBuf,
+    writer: Option<BufWriter<File>>,
     state: WalState,
+    completed_since_compaction: usize,
+    compaction_min_completes: usize,
+    compaction_min_size_bytes: u64,
 }
 
 #[derive(Debug, Default)]
@@ -36,8 +40,30 @@ enum WalEntry {
     Complete { id: OutboxId },
 }
 
+const DEFAULT_COMPACTION_MIN_COMPLETES: usize = 512;
+const DEFAULT_COMPACTION_MIN_SIZE_BYTES: u64 = 8 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+struct WalOutboxOptions {
+    compaction_min_completes: usize,
+    compaction_min_size_bytes: u64,
+}
+
+impl Default for WalOutboxOptions {
+    fn default() -> Self {
+        Self {
+            compaction_min_completes: DEFAULT_COMPACTION_MIN_COMPLETES,
+            compaction_min_size_bytes: DEFAULT_COMPACTION_MIN_SIZE_BYTES,
+        }
+    }
+}
+
 impl WalOutbox {
     pub fn new(path: PathBuf) -> Result<Self, String> {
+        Self::new_with_options(path, WalOutboxOptions::default())
+    }
+
+    fn new_with_options(path: PathBuf, options: WalOutboxOptions) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
                 format!(
@@ -48,21 +74,16 @@ impl WalOutbox {
         }
 
         let state = load_state_from_wal(&path)?;
-        let writer_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| {
-                format!(
-                    "failed to open telemetry outbox wal file '{}': {e}",
-                    path.display()
-                )
-            })?;
+        let writer_file = open_wal_append_file(&path)?;
 
         Ok(Self {
             inner: Mutex::new(WalOutboxInner {
-                writer: BufWriter::new(writer_file),
+                path,
+                writer: Some(BufWriter::new(writer_file)),
                 state,
+                completed_since_compaction: 0,
+                compaction_min_completes: options.compaction_min_completes,
+                compaction_min_size_bytes: options.compaction_min_size_bytes,
             }),
         })
     }
@@ -77,7 +98,11 @@ impl Outbox for WalOutbox {
 
         let id = inner_guard.state.next_id;
         let entry = WalEntry::Enqueue { id, event: data };
-        append_entry(&mut inner_guard.writer, &entry)?;
+        let writer = inner_guard
+            .writer
+            .as_mut()
+            .ok_or_else(|| "wal writer unavailable".to_string())?;
+        append_entry(writer, &entry)?;
         inner_guard.state.next_id += 1;
         if let WalEntry::Enqueue { id, event } = entry {
             inner_guard.state.pending.insert(id, event);
@@ -131,7 +156,16 @@ impl Outbox for WalOutbox {
             return Ok(());
         }
 
-        append_entry(&mut inner_guard.writer, &WalEntry::Complete { id })?;
+        let writer = inner_guard
+            .writer
+            .as_mut()
+            .ok_or_else(|| "wal writer unavailable".to_string())?;
+        append_entry(writer, &WalEntry::Complete { id })?;
+        inner_guard.completed_since_compaction =
+            inner_guard.completed_since_compaction.saturating_add(1);
+        if let Err(err) = maybe_compact(&mut inner_guard) {
+            tracing::warn!(error = %err, "failed to compact telemetry wal outbox");
+        }
         Ok(())
     }
 
@@ -160,6 +194,129 @@ fn append_entry(writer: &mut BufWriter<File>, entry: &WalEntry) -> Result<(), St
         .flush()
         .map_err(|e| format!("failed to flush wal entry: {e}"))?;
     Ok(())
+}
+
+fn maybe_compact(inner: &mut WalOutboxInner) -> Result<(), String> {
+    if inner.completed_since_compaction < inner.compaction_min_completes {
+        return Ok(());
+    }
+
+    let wal_size = fs::metadata(&inner.path)
+        .map_err(|e| {
+            format!(
+                "failed to stat telemetry wal '{}': {e}",
+                inner.path.display()
+            )
+        })?
+        .len();
+    if wal_size < inner.compaction_min_size_bytes {
+        return Ok(());
+    }
+
+    compact(inner)
+}
+
+fn compact(inner: &mut WalOutboxInner) -> Result<(), String> {
+    let live_entries = live_entries(&inner.state);
+
+    let mut current_writer = inner
+        .writer
+        .take()
+        .ok_or_else(|| "wal writer unavailable".to_string())?;
+    current_writer
+        .flush()
+        .map_err(|e| format!("failed to flush telemetry wal before compaction: {e}"))?;
+    drop(current_writer);
+
+    let compact_result = rewrite_compacted_wal(&inner.path, &live_entries);
+    let reopen_result = open_wal_append_file(&inner.path);
+
+    match reopen_result {
+        Ok(file) => inner.writer = Some(BufWriter::new(file)),
+        Err(e) => {
+            let message = match compact_result {
+                Ok(()) => e,
+                Err(compaction_err) => format!("{compaction_err}; also failed to reopen wal: {e}"),
+            };
+            return Err(message);
+        }
+    }
+
+    compact_result?;
+    inner.completed_since_compaction = 0;
+    Ok(())
+}
+
+fn live_entries(state: &WalState) -> BTreeMap<OutboxId, TelemetryEvent> {
+    let mut entries = BTreeMap::new();
+    for (id, event) in &state.pending {
+        entries.insert(*id, event.clone());
+    }
+    for (id, event) in &state.inflight {
+        entries.insert(*id, event.clone());
+    }
+    entries
+}
+
+fn rewrite_compacted_wal(
+    path: &Path,
+    live_entries: &BTreeMap<OutboxId, TelemetryEvent>,
+) -> Result<(), String> {
+    let tmp_path = wal_compaction_path(path);
+    {
+        let compact_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_path)
+            .map_err(|e| {
+                format!(
+                    "failed to open compacted telemetry wal '{}': {e}",
+                    tmp_path.display()
+                )
+            })?;
+        let mut compact_writer = BufWriter::new(compact_file);
+
+        for (id, event) in live_entries {
+            append_entry(
+                &mut compact_writer,
+                &WalEntry::Enqueue {
+                    id: *id,
+                    event: event.clone(),
+                },
+            )?;
+        }
+        compact_writer
+            .flush()
+            .map_err(|e| format!("failed to flush compacted telemetry wal: {e}"))?;
+    }
+
+    fs::rename(&tmp_path, path).map_err(|e| {
+        format!(
+            "failed to replace telemetry wal '{}' with compacted file '{}': {e}",
+            path.display(),
+            tmp_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn wal_compaction_path(path: &Path) -> PathBuf {
+    path.with_extension("wal.compact")
+}
+
+fn open_wal_append_file(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| {
+            format!(
+                "failed to open telemetry outbox wal file '{}': {e}",
+                path.display()
+            )
+        })
 }
 
 fn load_state_from_wal(path: &Path) -> Result<WalState, String> {
@@ -352,6 +509,85 @@ mod tests {
         );
 
         drop(outbox);
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn wal_outbox_compaction_bounds_file_size_after_completions() {
+        let dir = temp_dir("compact-size");
+        let wal_path = dir.join("outbox.wal");
+        let outbox = WalOutbox::new_with_options(
+            wal_path.clone(),
+            WalOutboxOptions {
+                compaction_min_completes: 1,
+                compaction_min_size_bytes: 0,
+            },
+        )
+        .expect("wal outbox should initialize");
+
+        for _ in 0..32 {
+            outbox
+                .enqueue(sample_event())
+                .expect("enqueue should write wal entry");
+            let claimed = outbox
+                .claim(1)
+                .expect("claim should succeed")
+                .expect("claim should return row");
+            outbox
+                .complete(claimed[0].0)
+                .expect("complete should succeed");
+        }
+
+        drop(outbox);
+
+        let size = fs::metadata(&wal_path).expect("wal should exist").len();
+        assert_eq!(size, 0, "compacted wal should be empty when no live rows");
+
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn wal_outbox_compaction_preserves_inflight_rows() {
+        let dir = temp_dir("compact-inflight");
+        let wal_path = dir.join("outbox.wal");
+        let outbox = WalOutbox::new_with_options(
+            wal_path.clone(),
+            WalOutboxOptions {
+                compaction_min_completes: 1,
+                compaction_min_size_bytes: 0,
+            },
+        )
+        .expect("wal outbox should initialize");
+
+        outbox
+            .enqueue(sample_event())
+            .expect("first enqueue should succeed");
+        outbox
+            .enqueue(sample_event())
+            .expect("second enqueue should succeed");
+
+        let inflight = outbox
+            .claim(1)
+            .expect("claim should succeed")
+            .expect("claim should return one row");
+        let inflight_id = inflight[0].0;
+
+        // Complete the remaining pending row to trigger compaction.
+        outbox
+            .complete(inflight_id + 1)
+            .expect("complete should succeed");
+
+        drop(outbox);
+
+        let reopened = WalOutbox::new(wal_path).expect("wal outbox should reopen");
+        let recovered = reopened
+            .claim(10)
+            .expect("claim should succeed")
+            .expect("inflight row should survive compaction");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].0, inflight_id);
+
+        drop(reopened);
         remove_dir(&dir);
     }
 }
