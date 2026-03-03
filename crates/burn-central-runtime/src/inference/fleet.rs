@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// Build a typed inference instance directly from a factory routine.
-pub fn build_fleet_managed<B, I, M, R>(
+pub fn build_fleet_managed_inference<B, I, M, R>(
     factory: impl IntoRoutine<InferenceContext<B>, (), I, M>,
     token: impl Into<FleetRegistrationToken>,
     metadata: impl Serialize,
@@ -62,6 +62,7 @@ where
         "metadata": metadata,
     });
 
+    // TODO: Remove hardcoding dev env
     let fleet_session = FleetDeviceSession::init(token.into(), metadata, &Env::Development)
         .map_err(|e| InferenceError::FactoryFailed {
             name: "fleet registration".to_string(),
