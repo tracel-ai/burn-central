@@ -74,11 +74,40 @@ pub fn ensure_cached_model(
         let bytes = fs::read(&manifest_path)?;
         let manifest: ModelDownloadManifest = serde_json::from_slice(&bytes)?;
 
-        // If the manifest matches the download response, we can skip validating files and re-downloading.
-        if manifest.model_version_id == download.model_version_id {
+        let mut manifest_files = manifest
+            .files
+            .iter()
+            .map(|f| {
+                (
+                    f.rel_path.clone(),
+                    f.size_bytes,
+                    normalize_checksum(&f.checksum),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut download_files = download
+            .files
+            .iter()
+            .map(|f| {
+                (
+                    f.rel_path.clone(),
+                    f.size_bytes,
+                    normalize_checksum(&f.checksum),
+                )
+            })
+            .collect::<Vec<_>>();
+        manifest_files.sort_unstable();
+        download_files.sort_unstable();
+
+        let manifest_matches_download = manifest.model_version_id == download.model_version_id
+            && manifest_files == download_files;
+
+        if manifest_matches_download
+            && cached_files_present_and_sized(&model_root, &manifest.files)?
+        {
             tracing::info!(
                 version = %download.model_version_id,
-                "cached model manifest matches download response, skipping cache update"
+                "cached model manifest matches download response and files are complete, skipping cache update"
             );
             return Ok(());
         }
@@ -118,6 +147,34 @@ pub fn ensure_cached_model(
     write_manifest_if_changed(&manifest_path, &manifest)?;
 
     Ok(())
+}
+
+fn cached_files_present_and_sized(
+    model_root: &Path,
+    files: &[ModelDownloadManifestFile],
+) -> Result<bool, io::Error> {
+    for file in files {
+        let path = model_root.join(&file.rel_path);
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(err),
+        };
+
+        if !metadata.is_file() || metadata.len() != file.size_bytes {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn normalize_checksum(value: &str) -> String {
+    let trimmed = value.trim().to_ascii_lowercase();
+    match trimmed.strip_prefix("sha256:") {
+        Some(rest) => rest.to_string(),
+        None => trimmed,
+    }
 }
 
 pub fn load_cached_model_source(
@@ -223,6 +280,33 @@ mod tests {
         let model_root = root.join("mv-1");
         assert!(model_root.exists());
         assert!(model_root.join("manifest.json").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cache_completeness_check_requires_files_with_expected_size() {
+        let root = temp_path("cache-complete");
+        let model_root = root.join("mv-1");
+        fs::create_dir_all(&model_root).expect("model root should exist");
+
+        let files = vec![ModelDownloadManifestFile {
+            rel_path: "weights.bin".to_string(),
+            size_bytes: 4,
+            checksum: "abc".to_string(),
+        }];
+
+        assert!(
+            !cached_files_present_and_sized(&model_root, &files).expect("check should succeed")
+        );
+
+        fs::write(model_root.join("weights.bin"), b"abc").expect("file should be created");
+        assert!(
+            !cached_files_present_and_sized(&model_root, &files).expect("check should succeed")
+        );
+
+        fs::write(model_root.join("weights.bin"), b"abcd").expect("file should be updated");
+        assert!(cached_files_present_and_sized(&model_root, &files).expect("check should succeed"));
 
         let _ = fs::remove_dir_all(root);
     }
