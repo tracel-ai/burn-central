@@ -1,12 +1,12 @@
 mod event;
+mod inference;
 mod logs;
 mod metrics;
 mod pipeline;
-mod request;
 
+pub use inference::{InferenceMetadata, InferenceWriterTelemetryObserver};
 use metrics_util::layers::Layer;
 use once_cell::sync::{Lazy, OnceCell};
-pub use request::{InferenceMetadata, InferenceWriterTelemetryObserver};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
