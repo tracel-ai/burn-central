@@ -91,12 +91,6 @@ fn download_one<W: Write>(
     http: &HttpClient,
     task: &mut DownloadTask<W>,
 ) -> Result<(), DownloadError> {
-    // if let Some(parent) = task.dest.parent() {
-    //     fs::create_dir_all(parent)?;
-    // }
-
-    // let tmp = temp_path(&task.dest)?;
-
     let mut resp = http
         .get(&task.url)
         .send()
@@ -146,20 +140,5 @@ fn download_one<W: Write>(
         });
     }
 
-    // if task.dest.exists() {
-    //     fs::remove_file(&task.dest)?;
-    // }
-
-    // fs::rename(tmp, &task.dest)?;
-
     Ok(())
 }
-
-// /// Generate a temporary file path for downloads.
-// fn temp_path(dest: &Path) -> Result<PathBuf, RegistryError> {
-//     let file_name = dest
-//         .file_name()
-//         .ok_or_else(|| RegistryError::InvalidPath("missing file name".to_string()))?
-//         .to_string_lossy();
-//     Ok(dest.with_file_name(format!(".{file_name}.partial")))
-// }
