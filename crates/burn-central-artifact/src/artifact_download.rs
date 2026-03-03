@@ -27,7 +27,7 @@ pub fn download_artifacts_to_dir(
         return Ok(());
     }
 
-    let mut tmps = Vec::with_capacity(files.len());
+    let mut staged_files = Vec::with_capacity(files.len());
     let mut tasks = Vec::with_capacity(files.len());
     for file in files {
         let rel_path = normalize_bundle_path(&file.rel_path);
@@ -38,10 +38,13 @@ pub fn download_artifacts_to_dir(
             fs::create_dir_all(parent)?;
         }
         let tmp = temp_path(&dest)?;
-        tmps.push((dest.clone(), tmp.clone()));
+        if tmp.exists() {
+            fs::remove_file(&tmp)?;
+        }
+        staged_files.push((dest.clone(), tmp.clone(), rel_path.clone()));
 
-        let dest_file = File::create(dest)?;
-        let writer = BufWriter::new(dest_file);
+        let tmp_file = File::create(tmp)?;
+        let writer = BufWriter::new(tmp_file);
 
         tasks.push(DownloadTask {
             rel_path: rel_path.clone(),
@@ -56,18 +59,27 @@ pub fn download_artifacts_to_dir(
         .map(|n| n.get())
         .unwrap_or(4);
     let http = reqwest::blocking::Client::new();
-    let res = download_tasks(&http, tasks, parallelism);
-
-    for (tmp_dest, tmp) in tmps {
-        if tmp_dest.exists() {
-            fs::remove_file(&tmp_dest)?;
+    if let Err(err) = download_tasks(&http, tasks, parallelism) {
+        for (_, tmp, _) in staged_files {
+            let _ = fs::remove_file(tmp);
         }
-        if tmp.exists() {
-            fs::rename(tmp, tmp_dest)?;
-        }
+        return Err(err);
     }
 
-    res
+    for (dest, tmp, rel_path) in staged_files {
+        if !tmp.exists() {
+            return Err(DownloadError::DownloadFailed {
+                path: rel_path,
+                details: "temporary downloaded file is missing".to_string(),
+            });
+        }
+        if dest.exists() {
+            fs::remove_file(&dest)?;
+        }
+        fs::rename(tmp, dest)?;
+    }
+
+    Ok(())
 }
 
 /// Generate a temporary file path for downloads.
