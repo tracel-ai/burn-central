@@ -19,8 +19,3 @@ pub trait InferenceWriterObserver: Send + Sync + 'static {
 
     fn on_finish(&self, _stats: &InferenceWriterStats) {}
 }
-
-#[derive(Default)]
-pub(crate) struct NoopInferenceWriterObserver;
-
-impl InferenceWriterObserver for NoopInferenceWriterObserver {}

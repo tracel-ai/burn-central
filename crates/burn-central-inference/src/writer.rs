@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-use crate::observer::{InferenceWriterObserver, InferenceWriterStats, NoopInferenceWriterObserver};
+use crate::observer::{InferenceWriterObserver, InferenceWriterStats};
 
 /// Errors that can occur when writing to an inference channel.
 #[derive(Debug, thiserror::Error)]
@@ -18,7 +18,7 @@ pub enum InferenceWriterError {
 pub struct InferenceWriter<O> {
     channel: Box<dyn InferenceWriterChannel<O>>,
     instant: std::time::Instant,
-    observer: Arc<dyn InferenceWriterObserver>,
+    observer: Option<Arc<dyn InferenceWriterObserver>>,
     outputs: AtomicUsize,
     errors: AtomicUsize,
     cancelled: AtomicBool,
@@ -30,7 +30,7 @@ impl<O> InferenceWriter<O> {
         Self {
             channel,
             instant: std::time::Instant::now(),
-            observer: Arc::new(NoopInferenceWriterObserver),
+            observer: None,
             outputs: AtomicUsize::new(0),
             errors: AtomicUsize::new(0),
             cancelled: AtomicBool::new(false),
@@ -46,7 +46,7 @@ impl<O> InferenceWriter<O> {
     }
 
     pub fn with_observer(mut self, observer: Arc<dyn InferenceWriterObserver>) -> Self {
-        self.observer = observer;
+        self.observer = Some(observer);
         self
     }
 
@@ -55,13 +55,17 @@ impl<O> InferenceWriter<O> {
         match self.channel.write(output) {
             Ok(()) => {
                 self.outputs.fetch_add(1, Ordering::Relaxed);
-                self.observer.on_write();
+                if let Some(ref observer) = self.observer {
+                    observer.on_write();
+                }
                 Ok(())
             }
             Err(err) => {
                 if matches!(&err, InferenceWriterError::Cancelled) {
                     self.cancelled.store(true, Ordering::Release);
-                    self.observer.on_cancelled();
+                    if let Some(ref observer) = self.observer {
+                        observer.on_cancelled();
+                    }
                 }
                 Err(err)
             }
@@ -76,13 +80,17 @@ impl<O> InferenceWriter<O> {
         match self.channel.error(error.into()) {
             Ok(()) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                self.observer.on_error();
+                if let Some(ref observer) = self.observer {
+                    observer.on_error();
+                }
                 Ok(())
             }
             Err(err) => {
                 if matches!(&err, InferenceWriterError::Cancelled) {
                     self.cancelled.store(true, Ordering::Release);
-                    self.observer.on_cancelled();
+                    if let Some(ref observer) = self.observer {
+                        observer.on_cancelled();
+                    }
                 }
                 Err(err)
             }
@@ -97,12 +105,14 @@ impl<O> InferenceWriter<O> {
             return;
         }
 
-        self.observer.on_finish(&InferenceWriterStats {
-            duration,
-            outputs: self.outputs.load(Ordering::Acquire),
-            errors: self.errors.load(Ordering::Acquire),
-            cancelled: self.cancelled.load(Ordering::Acquire),
-        });
+        if let Some(ref observer) = self.observer {
+            observer.on_finish(&InferenceWriterStats {
+                duration,
+                outputs: self.outputs.load(Ordering::Acquire),
+                errors: self.errors.load(Ordering::Acquire),
+                cancelled: self.cancelled.load(Ordering::Acquire),
+            });
+        }
     }
 }
 

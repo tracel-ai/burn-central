@@ -343,13 +343,13 @@ mod tests {
     #[test]
     fn test_fail_is_called_on_ship_failure() {
         let ids = vec![3, 2];
-        let noop_outbox = Arc::new(OutboxMock::with_ids(ids.clone()));
+        let outbox = Arc::new(OutboxMock::with_ids(ids.clone()));
         let transport = Arc::new(ShipperTransportMock::failing());
 
-        let _handle = start(noop_outbox.clone(), transport, Duration::from_millis(0));
+        let _handle = start(outbox.clone(), transport, Duration::from_millis(0));
 
         std::thread::sleep(Duration::from_millis(100));
-        let failed_ids = noop_outbox.failed_ids();
+        let failed_ids = outbox.failed_ids();
 
         assert_eq!(failed_ids, Some(ids));
     }
@@ -357,31 +357,27 @@ mod tests {
     #[test]
     fn test_complete_is_called_on_ship_success() {
         let ids = vec![3, 2];
-        let noop_outbox = Arc::new(OutboxMock::with_ids(ids.clone()));
+        let outbox = Arc::new(OutboxMock::with_ids(ids.clone()));
         let transport = Arc::new(ShipperTransportMock::succeeding());
 
-        let _handle = start(noop_outbox.clone(), transport, Duration::from_millis(0));
+        let _handle = start(outbox.clone(), transport, Duration::from_millis(0));
 
         std::thread::sleep(Duration::from_millis(100));
-        let completed_ids = noop_outbox.completed_ids();
+        let completed_ids = outbox.completed_ids();
 
         assert_eq!(completed_ids, Some(ids));
     }
 
     #[test]
     fn test_no_ship_on_empty_claim() {
-        let noop_outbox = Arc::new(OutboxMock::empty());
+        let outbox = Arc::new(OutboxMock::empty());
         let transport = Arc::new(ShipperTransportMock::succeeding());
 
-        let _handle = start(
-            noop_outbox.clone(),
-            transport.clone(),
-            Duration::from_millis(0),
-        );
+        let _handle = start(outbox.clone(), transport.clone(), Duration::from_millis(0));
 
         std::thread::sleep(Duration::from_millis(100));
-        let completed_ids = noop_outbox.completed_ids();
-        let failed_ids = noop_outbox.failed_ids();
+        let completed_ids = outbox.completed_ids();
+        let failed_ids = outbox.failed_ids();
 
         assert_eq!(completed_ids, None);
         assert_eq!(failed_ids, None);
@@ -391,14 +387,10 @@ mod tests {
     #[test]
     fn test_ship_called_with_claimed_events() {
         let ids = vec![3, 2];
-        let noop_outbox = Arc::new(OutboxMock::with_ids(ids.clone()));
+        let outbox = Arc::new(OutboxMock::with_ids(ids.clone()));
         let transport = Arc::new(ShipperTransportMock::succeeding());
 
-        let _handle = start(
-            noop_outbox.clone(),
-            transport.clone(),
-            Duration::from_millis(0),
-        );
+        let _handle = start(outbox.clone(), transport.clone(), Duration::from_millis(0));
 
         std::thread::sleep(Duration::from_millis(100));
         let ship_called_count = transport.ship_called();
