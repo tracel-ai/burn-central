@@ -68,7 +68,6 @@ burn-central-macros = { path = "crates/burn-central-macros", version = "0.5.0" }
 burn-central-inference = { path = "crates/burn-central-inference", version = "0.5.0" }
 burn-central-fleet = { path = "crates/burn-central-fleet", version = "0.5.0" }
 burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.5.0" }
-burn-central-registry = { path = "crates/burn-central-registry", version = "0.5.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.5.0"
