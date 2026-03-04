@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 
-use crate::bundle::{BundleSource, normalize_bundle_path};
+use crate::bundle::BundleSource;
+use crate::tools::path::normalize_bundle_path;
 
 /// In-memory reader for synthetic or cached bundles.
 pub struct InMemoryBundleReader {

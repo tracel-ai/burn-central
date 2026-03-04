@@ -1,9 +1,12 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::path::PathBuf;
 
-use burn_central_artifact::{ArtifactDownloadFile, DownloadError, download_artifacts_to_dir};
+use burn_central_artifact::bundle::FsBundle;
+use burn_central_artifact::download::{
+    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink,
+};
+use burn_central_artifact::normalize_checksum;
 use burn_central_client::fleet::response::FleetModelDownloadResponse;
 use serde::{Deserialize, Serialize};
 
@@ -20,20 +23,11 @@ pub enum ModelCacheError {
     #[error("cached model file missing: {0}")]
     MissingCachedFile(String),
     #[error(transparent)]
-    Registry(#[from] DownloadError),
-}
-
-/// Source information for loading an assigned model.
-#[derive(Debug, Clone)]
-pub struct ModelSource {
-    pub root: PathBuf,
-    pub files: Vec<String>,
-}
-
-impl ModelSource {
-    pub fn new(root: PathBuf, files: Vec<String>) -> Self {
-        Self { root, files }
-    }
+    Download(#[from] DownloadError),
+    #[error("invalid file path in model download manifest: {0}")]
+    InvalidRelPath(String),
+    #[error("invalid checksum in model metadata: {0}")]
+    InvalidChecksum(String),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,24 +72,34 @@ pub fn ensure_cached_model(
             .files
             .iter()
             .map(|f| {
-                (
+                Ok((
                     f.rel_path.clone(),
                     f.size_bytes,
-                    normalize_checksum(&f.checksum),
-                )
+                    normalize_checksum(&f.checksum).map_err(|e| {
+                        ModelCacheError::InvalidChecksum(format!(
+                            "manifest checksum for {}: {}",
+                            f.rel_path, e
+                        ))
+                    })?,
+                ))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, ModelCacheError>>()?;
         let mut download_files = download
             .files
             .iter()
             .map(|f| {
-                (
+                Ok((
                     f.rel_path.clone(),
                     f.size_bytes,
-                    normalize_checksum(&f.checksum),
-                )
+                    normalize_checksum(&f.checksum).map_err(|e| {
+                        ModelCacheError::InvalidChecksum(format!(
+                            "download checksum for {}: {}",
+                            f.rel_path, e
+                        ))
+                    })?,
+                ))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, ModelCacheError>>()?;
         manifest_files.sort_unstable();
         download_files.sort_unstable();
 
@@ -118,8 +122,8 @@ pub fn ensure_cached_model(
         files.push(ArtifactDownloadFile {
             rel_path: entry.rel_path.clone(),
             url: entry.url.clone(),
-            size_bytes: entry.size_bytes,
-            checksum: entry.checksum.clone(),
+            size_bytes: Some(entry.size_bytes),
+            checksum: Some(entry.checksum.clone()),
         });
     }
 
@@ -129,7 +133,8 @@ pub fn ensure_cached_model(
         "new model version detected, downloading model files to local filesystem"
     );
 
-    download_artifacts_to_dir(&model_root, &files)?;
+    let mut sink = FsBundle::create(model_root.clone()).map_err(ModelCacheError::Io)?;
+    download_artifacts_to_sink(&mut sink, &files)?;
 
     let manifest = ModelDownloadManifest {
         model_version_id: download.model_version_id.clone(),
@@ -169,18 +174,10 @@ fn cached_files_present_and_sized(
     Ok(true)
 }
 
-fn normalize_checksum(value: &str) -> String {
-    let trimmed = value.trim().to_ascii_lowercase();
-    match trimmed.strip_prefix("sha256:") {
-        Some(rest) => rest.to_string(),
-        None => trimmed,
-    }
-}
-
 pub fn load_cached_model_source(
     models_root: &Path,
     model_version_id: &str,
-) -> Result<ModelSource, ModelCacheError> {
+) -> Result<FsBundle, ModelCacheError> {
     if model_version_id.is_empty() {
         tracing::error!("model version id is empty in fleet state");
         return Err(ModelCacheError::MissingActiveModelVersion);
@@ -223,7 +220,10 @@ pub fn load_cached_model_source(
         }
     }
 
-    Ok(ModelSource::new(model_root, files))
+    let source =
+        FsBundle::with_files(model_root, files).map_err(ModelCacheError::InvalidRelPath)?;
+
+    Ok(source)
 }
 
 fn write_manifest_if_changed(
@@ -253,6 +253,7 @@ fn write_manifest_if_changed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use burn_central_client::fleet::response::FleetPresignedModelFileUrlResponse;
     use std::{
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -307,6 +308,47 @@ mod tests {
 
         fs::write(model_root.join("weights.bin"), b"abcd").expect("file should be updated");
         assert!(cached_files_present_and_sized(&model_root, &files).expect("check should succeed"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manifest_with_invalid_checksum_is_rejected() {
+        let root = temp_path("invalid-checksum");
+        let model_root = root.join("mv-1");
+        fs::create_dir_all(&model_root).expect("model root should exist");
+
+        let manifest = ModelDownloadManifest {
+            model_version_id: "mv-1".to_string(),
+            files: vec![ModelDownloadManifestFile {
+                rel_path: "weights.bin".to_string(),
+                size_bytes: 10,
+                checksum: "md5:abc".to_string(),
+            }],
+        };
+        let manifest_path = model_root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+
+        let download = FleetModelDownloadResponse {
+            model_version_id: "mv-1".to_string(),
+            files: vec![FleetPresignedModelFileUrlResponse {
+                rel_path: "weights.bin".to_string(),
+                url: "mock://weights".to_string(),
+                size_bytes: 10,
+                checksum: "sha256:00".to_string(),
+            }],
+        };
+
+        let err = ensure_cached_model(&root, "mv-1", &download)
+            .expect_err("invalid checksum metadata should fail early");
+        match err {
+            ModelCacheError::InvalidChecksum(msg) => assert!(msg.contains("manifest checksum")),
+            other => panic!("unexpected error: {other:?}"),
+        }
 
         let _ = fs::remove_dir_all(root);
     }

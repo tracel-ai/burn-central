@@ -16,6 +16,7 @@ anyhow.workspace = true
 burn-central-core.workspace = true
 burn-central-fleet.workspace = true
 burn-central-inference.workspace = true
+burn-central-artifact.workspace = true
 burn.workspace = true
 thiserror.workspace = true
 variadics_please.workspace = true

@@ -7,10 +7,7 @@ use burn_central_client::{Env, FleetClient};
 use directories::{BaseDirs, ProjectDirs};
 
 use crate::{
-    DeviceMetadata, FleetRegistrationToken,
-    error::FleetError,
-    model::{self, ModelSource},
-    state,
+    DeviceMetadata, FleetRegistrationToken, error::FleetError, model, state,
     telemetry::TelemetryPipeline,
 };
 
@@ -80,7 +77,7 @@ impl FleetDeviceSession {
         &self.fleet_key
     }
 
-    pub fn model_source(&self) -> Result<ModelSource, FleetError> {
+    pub fn model_source(&self) -> Result<burn_central_artifact::bundle::FsBundle, FleetError> {
         model::load_cached_model_source(
             &self.store.models_dir(&self.fleet_key),
             self.state.active_model_version_id(),

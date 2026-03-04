@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::bundle::{BundleSink, normalize_bundle_path};
+use crate::{bundle::BundleSink, tools::path::normalize_bundle_path};
 
 /// A builder for creating bundles with multiple files
 #[derive(Default, Clone)]

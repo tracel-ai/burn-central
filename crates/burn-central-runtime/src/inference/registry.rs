@@ -3,13 +3,13 @@ use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, IntoRoutine};
 use crate::{Args, MultiDevice};
 use burn::prelude::Backend;
-use burn_central_core::bundle::BundleDecode;
+use burn_central_artifact::bundle::{BundleDecode, FsBundle};
 use burn_central_inference::{ErasedInference, Inference, JsonInference};
 use derive_more::{Deref, From};
 use serde::{Serialize, de::DeserializeOwned};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InferenceError {
@@ -20,23 +20,21 @@ pub enum InferenceError {
 }
 
 /// Runtime wrapper around fleet model sources to support routine param injection.
-#[derive(Debug, Clone, Deref, From)]
-pub struct ModelSource(burn_central_fleet::ModelSource);
+#[derive(Debug, Deref, From)]
+pub struct ModelSource(FsBundle);
 
 impl ModelSource {
-    pub fn new(root: PathBuf, files: Vec<String>) -> Self {
-        Self(burn_central_fleet::ModelSource::new(root, files))
+    pub fn new(source: FsBundle) -> Self {
+        Self(source)
     }
 
     pub fn load<D: BundleDecode>(&self, settings: &D::Settings) -> Result<D, D::Error> {
-        let reader =
-            burn_central_core::bundle::FsBundleReader::new(self.root.clone(), self.files.clone());
-        D::decode(&reader, settings)
+        D::decode(&self.0, settings)
     }
 }
 
 pub struct InferenceInit<B: Backend> {
-    pub model: ModelSource,
+    pub model: RefCell<Option<ModelSource>>,
     pub device: B::Device,
 }
 
@@ -100,8 +98,11 @@ impl<B: Backend> InferenceContext<B> {
         self.args.merged_args_or_default()
     }
 
-    pub fn model(&self) -> &ModelSource {
-        &self.init.model
+    pub fn model(&self) -> ModelSource {
+        self.init
+            .model
+            .take()
+            .expect("model source should be set in inference context")
     }
 
     pub fn device(&self) -> &B::Device {
@@ -113,7 +114,7 @@ impl<B: Backend> RoutineParam<InferenceContext<B>> for ModelSource {
     type Item<'new> = ModelSource;
 
     fn try_retrieve(ctx: &InferenceContext<B>) -> anyhow::Result<Self::Item<'_>> {
-        Ok(ctx.model().clone())
+        Ok(ctx.model())
     }
 }
 

@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapOption;
 use burn::prelude::Backend;
+use burn_central_artifact::bundle::FsBundle;
 use burn_central_inference::{Inference, InferenceWriter};
 
 use crate::FleetDeviceSession;
-use crate::model::ModelSource;
 use crate::telemetry::{InferenceMetadata, InferenceWriterTelemetryObserver};
 
 #[derive(Debug, thiserror::Error)]
@@ -18,7 +18,7 @@ pub enum FleetManagedInferenceError {
 pub trait FleetManagedFactory<B: Backend, I>: Send + Sync {
     fn build(
         &self,
-        model_source: ModelSource,
+        model_source: FsBundle,
         runtime_config: serde_json::Value,
         device: B::Device,
     ) -> Result<I, String>;
@@ -26,12 +26,12 @@ pub trait FleetManagedFactory<B: Backend, I>: Send + Sync {
 
 impl<F, B, I> FleetManagedFactory<B, I> for F
 where
-    F: Fn(ModelSource, serde_json::Value, B::Device) -> Result<I, String> + Send + Sync,
+    F: Fn(FsBundle, serde_json::Value, B::Device) -> Result<I, String> + Send + Sync,
     B: Backend,
 {
     fn build(
         &self,
-        model_source: ModelSource,
+        model_source: FsBundle,
         runtime_config: serde_json::Value,
         device: B::Device,
     ) -> Result<I, String> {

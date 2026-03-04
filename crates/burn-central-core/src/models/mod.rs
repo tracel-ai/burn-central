@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::bundle::{BundleDecode, InMemoryBundleReader};
+use burn_central_artifact::bundle::{BundleDecode, InMemoryBundleReader};
 use burn_central_client::response::{ModelResponse, ModelVersionResponse};
 use burn_central_client::{Client, ClientError};
 

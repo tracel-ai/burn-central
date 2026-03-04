@@ -182,6 +182,9 @@ impl BurnCentral {
 
     /// Create a model registry for downloading models from Burn Central.
     /// Models are project-scoped and identified by namespace/project/model_name.
+    #[deprecated(
+        note = "A model registry will be added in a future release, as part of a separate module."
+    )]
     pub fn models(&self) -> ModelRegistry {
         ModelRegistry::new(self.client.clone())
     }

@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 use crate::artifacts::ArtifactKind;
-use crate::bundle::{BundleDecode, BundleEncode, BundleSink};
 use crate::experiment::{ExperimentRun, ExperimentRunHandle};
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
 use burn::tensor::backend::Backend;
+use burn_central_artifact::bundle::{BundleDecode, BundleEncode, BundleSink, BundleSource};
 use serde::Deserialize;
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -67,10 +67,7 @@ where
     type Settings = CheckpointRecordArtifactSettings;
     type Error = String;
 
-    fn decode<I: crate::bundle::BundleSource>(
-        source: &I,
-        settings: &Self::Settings,
-    ) -> Result<Self, Self::Error> {
+    fn decode<I: BundleSource>(source: &I, settings: &Self::Settings) -> Result<Self, Self::Error> {
         let mut reader = source.open(&settings.name).map_err(|e| {
             format!(
                 "Failed to get reader for checkpoint artifact {}: {}",
