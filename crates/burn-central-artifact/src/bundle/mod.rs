@@ -15,7 +15,7 @@
 //! struct MyModel {
 //!     name: String,
 //!     parameters: Vec<f32>,
-//! }!
+//! }
 //! impl BundleEncode for MyModel {
 //!     type Settings = ();
 //!     type Error = String;
