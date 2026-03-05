@@ -38,11 +38,9 @@ where
     let error_name = inference_name.clone();
 
     let inference_factory: Box<dyn FleetManagedFactory<B, I::Inference>> = Box::new(
-        move |model_source: burn_central_fleet::ModelSource,
-              runtime_config: serde_json::Value,
-              device: B::Device| {
+        move |model_source, runtime_config: serde_json::Value, device: B::Device| {
             let init = InferenceInit {
-                model: ModelSource::from(model_source),
+                model: Some(ModelSource::from(model_source)).into(),
                 device,
             };
             let mut ctx = InferenceContext::new(init, InferenceArgs::new(Some(runtime_config)));

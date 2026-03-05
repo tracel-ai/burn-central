@@ -1,8 +1,11 @@
-//! This crate centralizes traits, structures and utilities for handling artifacts and models in Burn Central.
+//! This crate centralizes traits, structures and utilities for handling artifacts in Burn Central.
 
-mod artifact_download;
-mod download;
 mod tools;
+mod transfer;
 
-pub use artifact_download::{ArtifactDownloadFile, download_artifacts_to_dir};
-pub use download::DownloadError;
+pub mod bundle;
+pub mod download;
+pub mod upload;
+
+pub use tools::validation::normalize_checksum;
+pub use transfer::{FileTransferClient, ReqwestTransferClient};

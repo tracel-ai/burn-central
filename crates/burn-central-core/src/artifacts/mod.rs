@@ -1,13 +1,16 @@
-use burn_central_client::response::{ArtifactResponse, MultipartUploadResponse};
+use burn_central_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
+use burn_central_artifact::download::{
+    ArtifactDownloadFile, DownloadError, download_artifacts_to_sink,
+};
+use burn_central_artifact::upload::{
+    MultipartUploadFile, MultipartUploadPart, UploadError, upload_bundle_multipart,
+};
+use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
+use burn_central_client::response::ArtifactResponse;
 use burn_central_client::{Client, ClientError};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 
-use crate::bundle::{BundleDecode, BundleEncode, FsBundleReader, FsBundleSink};
 use crate::schemas::ExperimentPath;
-use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
 
 #[derive(Debug, Clone, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -17,7 +20,7 @@ pub enum ArtifactKind {
     Other,
 }
 
-/// A scope for artifact operations within a specific experiment
+/// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
 pub struct ExperimentArtifactClient {
     client: Client,
@@ -38,19 +41,25 @@ impl ExperimentArtifactClient {
         settings: &E::Settings,
     ) -> Result<String, ArtifactError> {
         let name = name.into();
-        let mut sink = FsBundleSink::temp()
+        let mut bundle = FsBundle::temp()
             .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
 
-        artifact.encode(&mut sink, settings).map_err(|e| {
+        artifact.encode(&mut bundle, settings).map_err(|e| {
             ArtifactError::Encoding(format!("Failed to encode artifact: {}", e.into()))
         })?;
 
-        let mut specs = Vec::with_capacity(sink.files().len());
-        for f in sink.files() {
+        let mut specs = Vec::with_capacity(bundle.files().len());
+        for f in bundle.files() {
+            let size_bytes = f.size_bytes.ok_or_else(|| {
+                ArtifactError::Internal(format!("Missing file size for {}", f.rel_path))
+            })?;
+            let checksum = f.checksum.clone().ok_or_else(|| {
+                ArtifactError::Internal(format!("Missing checksum for {}", f.rel_path))
+            })?;
             specs.push(ArtifactFileSpecRequest {
                 rel_path: f.rel_path.clone(),
-                size_bytes: f.size_bytes,
-                checksum: f.checksum.clone(),
+                size_bytes,
+                checksum,
             });
         }
 
@@ -65,14 +74,14 @@ impl ExperimentArtifactClient {
             },
         )?;
 
-        let mut multipart_map: BTreeMap<String, &MultipartUploadResponse> = BTreeMap::new();
+        let mut multipart_map = BTreeMap::new();
         for f in &res.files {
             multipart_map.insert(f.rel_path.clone(), &f.urls);
         }
 
-        let files = sink.files().to_vec();
+        let mut uploads = Vec::with_capacity(bundle.files().len());
 
-        for f in files {
+        for f in bundle.files() {
             let multipart_info = multipart_map.get(&f.rel_path).ok_or_else(|| {
                 ArtifactError::Internal(format!(
                     "Missing multipart upload info for file {}",
@@ -80,8 +89,22 @@ impl ExperimentArtifactClient {
                 ))
             })?;
 
-            self.upload_file_multipart_streaming(&f.abs_path, &f.rel_path, multipart_info)?;
+            let parts = multipart_info
+                .parts
+                .iter()
+                .map(|part| MultipartUploadPart {
+                    part: part.part,
+                    url: part.url.clone(),
+                    size_bytes: part.size_bytes,
+                })
+                .collect::<Vec<_>>();
+
+            uploads.push(MultipartUploadFile {
+                rel_path: f.rel_path.clone(),
+                parts,
+            });
         }
+        upload_bundle_multipart(&bundle, &uploads)?;
 
         self.client.complete_artifact_upload(
             self.exp_path.owner_name(),
@@ -94,7 +117,7 @@ impl ExperimentArtifactClient {
         Ok(res.id)
     }
 
-    /// Download an artifact and decode it using the BundleDecode trait (filesystem-backed)
+    /// Download an artifact and decode it using the BundleDecode trait (filesystem-backed).
     pub fn download<D: BundleDecode>(
         &self,
         name: impl AsRef<str>,
@@ -110,8 +133,8 @@ impl ExperimentArtifactClient {
         })
     }
 
-    /// Download an artifact as a filesystem-backed bundle reader
-    pub fn download_raw(&self, name: impl AsRef<str>) -> Result<FsBundleReader, ArtifactError> {
+    /// Download an artifact as a filesystem-backed bundle.
+    pub fn download_raw(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
         let resp = self.client.presign_artifact_download(
@@ -121,62 +144,25 @@ impl ExperimentArtifactClient {
             &artifact.id.to_string(),
         )?;
 
-        let mut file_list = Vec::new();
-        for file_info in &resp.files {
-            file_list.push(file_info.rel_path.clone());
+        let mut files = Vec::with_capacity(resp.files.len());
+        for file in resp.files {
+            files.push(ArtifactDownloadFile {
+                rel_path: file.rel_path,
+                url: file.url,
+                size_bytes: None,
+                checksum: None,
+            });
         }
 
-        // Create a temporary bundle reader that owns its temp directory
-        let reader = FsBundleReader::temp(file_list)
+        let mut bundle = FsBundle::temp()
             .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
 
-        for file_info in resp.files {
-            let rel_path = file_info.rel_path;
-            let dest_path = reader.root().join(&rel_path);
+        download_artifacts_to_sink(&mut bundle, &files)?;
 
-            // Create parent directories
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    ArtifactError::Internal(format!(
-                        "Failed to create directory for {}: {}",
-                        rel_path, e
-                    ))
-                })?;
-            }
-
-            // Download file directly to disk
-            self.download_file_to_path(&file_info.url, &dest_path)?;
-        }
-
-        Ok(reader)
+        Ok(bundle)
     }
 
-    fn download_file_to_path(&self, url: &str, dest: &Path) -> Result<(), ArtifactError> {
-        let http = reqwest::blocking::Client::new();
-        let mut response = http
-            .get(url)
-            .send()
-            .map_err(|e| ArtifactError::Internal(format!("Failed to download from URL: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(ArtifactError::Internal(format!(
-                "Failed to download file: HTTP {}",
-                response.status()
-            )));
-        }
-
-        let mut file = File::create(dest).map_err(|e| {
-            ArtifactError::Internal(format!("Failed to create file {}: {}", dest.display(), e))
-        })?;
-
-        std::io::copy(&mut response, &mut file).map_err(|e| {
-            ArtifactError::Internal(format!("Failed to write file {}: {}", dest.display(), e))
-        })?;
-
-        Ok(())
-    }
-
-    /// Fetch information about an artifact by name
+    /// Fetch information about an artifact by name.
     pub fn fetch(&self, name: impl AsRef<str>) -> Result<ArtifactResponse, ArtifactError> {
         let name = name.as_ref();
         self.client
@@ -191,88 +177,6 @@ impl ExperimentArtifactClient {
             .next()
             .ok_or_else(|| ArtifactError::NotFound(name.to_owned()))
     }
-
-    fn upload_file_multipart_streaming(
-        &self,
-        file_path: &Path,
-        rel_path: &str,
-        multipart_info: &MultipartUploadResponse,
-    ) -> Result<(), ArtifactError> {
-        let metadata = fs::metadata(file_path)
-            .map_err(|e| ArtifactError::Internal(format!("Failed to stat file {rel_path}: {e}")))?;
-        let file_len = metadata.len();
-
-        let mut part_indices: Vec<usize> = (0..multipart_info.parts.len()).collect();
-        part_indices.sort_by_key(|&i| multipart_info.parts[i].part);
-
-        for (i, &part_idx) in part_indices.iter().enumerate() {
-            let part = &multipart_info.parts[part_idx];
-            if part.part != (i as u32 + 1) {
-                return Err(ArtifactError::Internal(format!(
-                    "Invalid part numbering for {}: expected part {}, got part {}",
-                    rel_path,
-                    i + 1,
-                    part.part
-                )));
-            }
-        }
-
-        let http = reqwest::blocking::Client::new();
-        let mut offset = 0u64;
-
-        for (part_index, &part_idx) in part_indices.iter().enumerate() {
-            let part_info = &multipart_info.parts[part_idx];
-            let size = part_info.size_bytes;
-
-            if offset + size > file_len {
-                return Err(ArtifactError::Internal(format!(
-                    "Part {} exceeds file length for {}",
-                    part_index + 1,
-                    rel_path
-                )));
-            }
-
-            let mut file = File::open(file_path).map_err(|e| {
-                ArtifactError::Internal(format!("Failed to open file {rel_path}: {e}"))
-            })?;
-            file.seek(SeekFrom::Start(offset)).map_err(|e| {
-                ArtifactError::Internal(format!("Failed to seek file {rel_path}: {e}"))
-            })?;
-
-            let reader = file.take(size);
-            let body = reqwest::blocking::Body::sized(reader, size);
-            let response = http.put(&part_info.url).body(body).send().map_err(|e| {
-                ArtifactError::Internal(format!(
-                    "Failed to upload part {} of {} for {}: {}",
-                    part_index + 1,
-                    multipart_info.parts.len(),
-                    rel_path,
-                    e
-                ))
-            })?;
-
-            if !response.status().is_success() {
-                return Err(ArtifactError::Internal(format!(
-                    "Failed to upload part {} of {} for {}: HTTP {}",
-                    part_index + 1,
-                    multipart_info.parts.len(),
-                    rel_path,
-                    response.status()
-                )));
-            }
-
-            offset += size;
-        }
-
-        if offset != file_len {
-            return Err(ArtifactError::Internal(format!(
-                "Multipart upload size mismatch for {} (uploaded {}, expected {})",
-                rel_path, offset, file_len
-            )));
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -285,6 +189,10 @@ pub enum ArtifactError {
     Encoding(String),
     #[error("Error while decoding artifact: {0}")]
     Decoding(String),
+    #[error(transparent)]
+    Download(#[from] DownloadError),
+    #[error(transparent)]
+    Upload(#[from] UploadError),
     #[error("Internal error: {0}")]
     Internal(String),
 }

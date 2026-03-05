@@ -1,9 +1,9 @@
 use crate::executor::ExecutionContext;
 use crate::params::RoutineParam;
 use burn::prelude::Backend;
+use burn_central_artifact::bundle::BundleDecode;
 use burn_central_core::BurnCentral;
 use burn_central_core::artifacts::ArtifactError;
-use burn_central_core::bundle::BundleDecode;
 
 /// Artifact loader for loading artifacts from Burn Central. It allow to fecth for instance other
 /// experiment endpoint to be able to restart from a certain point your experiment.
@@ -14,7 +14,7 @@ use burn_central_core::bundle::BundleDecode;
 ///
 /// ```ignore
 /// # use burn_central_runtime::ArtifactLoader;
-/// # use burn_central_core::bundle::BundleDecode;
+/// # use burn_central_artifact::bundle::BundleDecode;
 /// # use burn_central::register;
 /// # use burn_central_runtime::Model;
 /// # use burn_central_runtime::MultiDevice;

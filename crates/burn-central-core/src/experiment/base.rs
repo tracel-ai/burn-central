@@ -1,11 +1,11 @@
 use super::socket::ExperimentSocket;
 use crate::artifacts::{ArtifactKind, ExperimentArtifactClient};
-use crate::bundle::{BundleDecode, BundleEncode, FsBundleReader};
 use crate::experiment::CancelToken;
 use crate::experiment::error::ExperimentTrackerError;
 use crate::experiment::log_store::TempLogStore;
 use crate::experiment::socket::ThreadError;
 use crate::schemas::ExperimentPath;
+use burn_central_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 use burn_central_client::Client;
 pub use burn_central_client::websocket::MetricLog;
 use burn_central_client::websocket::{ExperimentCompletion, ExperimentMessage, InputUsed};
@@ -62,7 +62,7 @@ impl ExperimentRunHandle {
     pub fn load_artifact_raw(
         &self,
         name: impl AsRef<str>,
-    ) -> Result<FsBundleReader, ExperimentTrackerError> {
+    ) -> Result<FsBundle, ExperimentTrackerError> {
         self.try_upgrade()?.load_artifact_raw(name)
     }
 
@@ -206,7 +206,7 @@ impl ExperimentRunInner {
     pub fn load_artifact_raw(
         &self,
         name: impl AsRef<str>,
-    ) -> Result<FsBundleReader, ExperimentTrackerError> {
+    ) -> Result<FsBundle, ExperimentTrackerError> {
         let scope = ExperimentArtifactClient::new(self.http_client.clone(), self.id.clone());
         let artifact = scope.fetch(&name)?;
         self.send(ExperimentMessage::InputUsed(InputUsed::Artifact {

@@ -1,8 +1,8 @@
 use crate::executor::ExecutionContext;
 use crate::params::default::Model;
 use burn::prelude::Backend;
+use burn_central_artifact::bundle::BundleEncode;
 use burn_central_core::artifacts::ArtifactKind;
-use burn_central_core::bundle::BundleEncode;
 use std::fmt::Display;
 
 /// This trait defines how a specific return type (Output) from a handler apply its effects to the execution context.

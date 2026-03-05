@@ -1,10 +1,20 @@
 use std::path::{Path, PathBuf};
 
-use burn_central_core::bundle::normalize_bundle_path;
+/// Normalize a path within a bundle (use forward slashes, remove leading slash)
+pub fn normalize_bundle_path<S: AsRef<str>>(s: S) -> String {
+    s.as_ref()
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string()
+}
 
 /// Sanitize a relative path to prevent directory traversal attacks.
 pub fn sanitize_rel_path(path: &str) -> Result<PathBuf, String> {
     let normalized = normalize_bundle_path(path);
+    if normalized.is_empty() {
+        return Err("invalid path component: empty path".to_string());
+    }
+
     let rel = Path::new(&normalized);
     for component in rel.components() {
         use std::path::Component;
