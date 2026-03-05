@@ -61,7 +61,10 @@ impl BundleSink for InMemoryBundleSources {
         reader
             .read_to_end(&mut buf)
             .map_err(|e| format!("Failed to read from source: {}", e))?;
-        *self = self.clone().add_bytes(buf, path);
+        self.files.push(PendingFile {
+            dest_path: normalize_bundle_path(path),
+            source: buf,
+        });
         Ok(())
     }
 }

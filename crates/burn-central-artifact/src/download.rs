@@ -304,4 +304,25 @@ mod tests {
             other => panic!("unexpected error: {other:?}"),
         }
     }
+
+    #[test]
+    fn fails_on_size_mismatch() {
+        let data = b"payload".to_vec();
+        let mut sink = InMemoryBundleSources::new();
+        let backend = MockBackend::new(HashMap::from([("mock://f3".to_string(), data.clone())]));
+        let files = vec![ArtifactDownloadFile {
+            rel_path: "params.bin".to_string(),
+            url: "mock://f3".to_string(),
+            size_bytes: Some((data.len() as u64) + 1),
+            checksum: None,
+        }];
+
+        let err = download_artifacts_to_sink_with_backend(&backend, &mut sink, &files)
+            .expect_err("size mismatch should fail");
+
+        match err {
+            DownloadError::SizeMismatch { path, .. } => assert_eq!(path, "params.bin"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }
