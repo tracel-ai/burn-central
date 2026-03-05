@@ -1,16 +1,16 @@
 //! This module provides utilities for uploading artifact files from any source to any target bundle sink using multipart uploads with presigned URLs.
 //!
-//! The upload process can be customized with any implementation of the FileTransferBackend trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
+//! The upload process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc), and multipart file sources can be abstracted behind the MultipartUploadSource trait for maximum flexibility (e.g. to support streaming from large files without loading them fully into memory).
 
 use crate::transfer::TransferError;
-use crate::{FileTransferBackend, ReqwestTransferBackend};
+use crate::{FileTransferClient, ReqwestTransferClient};
 use std::collections::HashSet;
 use std::io::Read;
 
 /// Errors that can occur during artifact file uploads.
 #[derive(Debug, thiserror::Error)]
 pub enum UploadError {
-    /// Errors from the transfer backend (e.g. network errors, HTTP errors).
+    /// Errors from the transfer client (e.g. network errors, HTTP errors).
     #[error("transfer error for part {part_index} of {total_parts} for {rel_path}: {source}")]
     Transfer {
         part_index: usize,
@@ -65,13 +65,13 @@ pub fn upload_bundle_multipart<S: MultipartUploadSource>(
     source: &S,
     files: &[MultipartUploadFile],
 ) -> Result<(), UploadError> {
-    let backend = ReqwestTransferBackend::new();
-    upload_bundle_multipart_with_backend(&backend, source, files)
+    let client = ReqwestTransferClient::new();
+    upload_bundle_multipart_with_client(&client, source, files)
 }
 
-/// Upload multiple files from a multipart source using presigned URLs and a custom backend.
-pub fn upload_bundle_multipart_with_backend<B: FileTransferBackend, S: MultipartUploadSource>(
-    backend: &B,
+/// Upload multiple files from a multipart source using presigned URLs and a custom client.
+pub fn upload_bundle_multipart_with_client<FTC: FileTransferClient, S: MultipartUploadSource>(
+    client: &FTC,
     source: &S,
     files: &[MultipartUploadFile],
 ) -> Result<(), UploadError> {
@@ -85,14 +85,14 @@ pub fn upload_bundle_multipart_with_backend<B: FileTransferBackend, S: Multipart
             )));
         }
 
-        upload_source_file_multipart_streaming(backend, source, &file.rel_path, &file.parts)?;
+        upload_source_file_multipart_streaming(client, source, &file.rel_path, &file.parts)?;
     }
 
     Ok(())
 }
 
-fn upload_source_file_multipart_streaming<B: FileTransferBackend, S: MultipartUploadSource>(
-    backend: &B,
+fn upload_source_file_multipart_streaming<FTC: FileTransferClient, S: MultipartUploadSource>(
+    client: &FTC,
     source: &S,
     rel_path: &str,
     parts: &[MultipartUploadPart],
@@ -129,7 +129,7 @@ fn upload_source_file_multipart_streaming<B: FileTransferBackend, S: MultipartUp
         }
 
         let reader = source.open_part(rel_path, offset, size)?;
-        backend
+        client
             .put_reader(&part.url, reader, size)
             .map_err(|e| UploadError::Transfer {
                 part_index: part_index + 1,
@@ -160,11 +160,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
-    struct MockBackend {
+    struct MockClient {
         puts: Arc<Mutex<Vec<(String, u64, Vec<u8>)>>>,
     }
 
-    impl FileTransferBackend for MockBackend {
+    impl FileTransferClient for MockClient {
         fn put_reader<R: Read + Send + 'static>(
             &self,
             url: &str,
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn rejects_non_contiguous_part_numbering() {
-        let backend = MockBackend::default();
+        let client = MockClient::default();
         let source = MockSource::new(HashMap::from([(
             "weights.bin".to_string(),
             b"abcd".to_vec(),
@@ -255,7 +255,7 @@ mod tests {
             ],
         }];
 
-        let err = upload_bundle_multipart_with_backend(&backend, &source, &files)
+        let err = upload_bundle_multipart_with_client(&client, &source, &files)
             .expect_err("part numbering must be contiguous");
 
         match err {
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn rejects_part_plan_exceeding_file_len() {
-        let backend = MockBackend::default();
+        let client = MockClient::default();
         let source = MockSource::new(HashMap::from([(
             "weights.bin".to_string(),
             b"abc".to_vec(),
@@ -287,7 +287,7 @@ mod tests {
             ],
         }];
 
-        let err = upload_bundle_multipart_with_backend(&backend, &source, &files)
+        let err = upload_bundle_multipart_with_client(&client, &source, &files)
             .expect_err("total part sizes cannot exceed file len");
 
         match err {
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn uploads_all_parts_with_expected_content() {
-        let backend = MockBackend::default();
+        let client = MockClient::default();
         let source = MockSource::new(HashMap::from([(
             "weights.bin".to_string(),
             b"abcdef".to_vec(),
@@ -324,10 +324,10 @@ mod tests {
             ],
         }];
 
-        upload_bundle_multipart_with_backend(&backend, &source, &files)
+        upload_bundle_multipart_with_client(&client, &source, &files)
             .expect("valid multipart plan should upload");
 
-        let puts = backend.puts.lock().expect("lock puts");
+        let puts = client.puts.lock().expect("lock puts");
         assert_eq!(puts.len(), 3);
         assert_eq!(puts[0], ("u1".to_string(), 2, b"ab".to_vec()));
         assert_eq!(puts[1], ("u2".to_string(), 2, b"cd".to_vec()));

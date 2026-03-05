@@ -1,6 +1,6 @@
 //! This module provides utilities for downloading artifact files from any source to any target bundle sink.
 //!
-//! Downloaded files are validated against expected sizes and checksums when provided, and the download process can be customized with any implementation of the FileTransferBackend trait (e.g. for custom HTTP clients, authentication, retries, etc).
+//! Downloaded files are validated against expected sizes and checksums when provided, and the download process can be customized with any implementation of the FileTransferClient trait (e.g. for custom HTTP clients, authentication, retries, etc).
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -10,12 +10,12 @@ use sha2::Digest;
 use crate::bundle::BundleSink;
 use crate::tools::path::normalize_bundle_path;
 use crate::tools::validation::normalize_checksum;
-use crate::{FileTransferBackend, ReqwestTransferBackend};
+use crate::{FileTransferClient, ReqwestTransferClient};
 
 /// Errors that can occur during artifact file downloads.
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
-    /// Errors from the transfer backend (e.g. network errors, HTTP errors).
+    /// Errors from the transfer client (e.g. network errors, HTTP errors).
     #[error("transfer error for {rel_path}: {source}")]
     Transfer {
         rel_path: String,
@@ -63,19 +63,19 @@ pub fn download_artifacts_to_sink<S: BundleSink>(
     sink: &mut S,
     files: &[ArtifactDownloadFile],
 ) -> Result<(), DownloadError> {
-    let backend = ReqwestTransferBackend::new();
-    download_artifacts_to_sink_with_backend(&backend, sink, files)
+    let client = ReqwestTransferClient::new();
+    download_artifacts_to_sink_with_client(&client, sink, files)
 }
 
-/// Download artifact files into any bundle sink implementation using a custom transfer backend.
-pub fn download_artifacts_to_sink_with_backend<B: FileTransferBackend, S: BundleSink>(
-    backend: &B,
+/// Download artifact files into any bundle sink implementation using a custom transfer client.
+pub fn download_artifacts_to_sink_with_client<FTC: FileTransferClient, S: BundleSink>(
+    client: &FTC,
     sink: &mut S,
     files: &[ArtifactDownloadFile],
 ) -> Result<(), DownloadError> {
     let files = validated_download_files(files)?;
     for (rel_path, file) in files {
-        let reader = backend
+        let reader = client
             .get_reader(&file.url)
             .map_err(|e| DownloadError::Transfer {
                 rel_path: rel_path.clone(),
@@ -194,11 +194,11 @@ mod tests {
     use std::sync::Arc;
 
     #[derive(Clone)]
-    struct MockBackend {
+    struct MockClient {
         files: Arc<HashMap<String, Vec<u8>>>,
     }
 
-    impl MockBackend {
+    impl MockClient {
         fn new(files: HashMap<String, Vec<u8>>) -> Self {
             Self {
                 files: Arc::new(files),
@@ -206,7 +206,7 @@ mod tests {
         }
     }
 
-    impl FileTransferBackend for MockBackend {
+    impl FileTransferClient for MockClient {
         fn put_reader<R: Read + Send + 'static>(
             &self,
             _url: &str,
@@ -240,7 +240,7 @@ mod tests {
         let data = b"hello world".to_vec();
         let checksum = sha256_hex(&data);
         let mut sink = InMemoryBundleSources::new();
-        let backend = MockBackend::new(HashMap::from([("mock://f1".to_string(), data.clone())]));
+        let client = MockClient::new(HashMap::from([("mock://f1".to_string(), data.clone())]));
         let files = vec![ArtifactDownloadFile {
             rel_path: "weights.bin".to_string(),
             url: "mock://f1".to_string(),
@@ -248,7 +248,7 @@ mod tests {
             checksum: Some(checksum),
         }];
 
-        download_artifacts_to_sink_with_backend(&backend, &mut sink, &files)
+        download_artifacts_to_sink_with_client(&client, &mut sink, &files)
             .expect("download should succeed");
 
         assert_eq!(sink.len(), 1);
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_relative_paths() {
-        let backend = MockBackend::new(HashMap::new());
+        let client = MockClient::new(HashMap::new());
         let mut sink = InMemoryBundleSources::new();
         let files = vec![
             ArtifactDownloadFile {
@@ -275,7 +275,7 @@ mod tests {
             },
         ];
 
-        let err = download_artifacts_to_sink_with_backend(&backend, &mut sink, &files)
+        let err = download_artifacts_to_sink_with_client(&client, &mut sink, &files)
             .expect_err("duplicate paths should fail");
 
         match err {
@@ -288,7 +288,7 @@ mod tests {
     fn fails_on_checksum_mismatch() {
         let data = b"payload".to_vec();
         let mut sink = InMemoryBundleSources::new();
-        let backend = MockBackend::new(HashMap::from([("mock://f2".to_string(), data.clone())]));
+        let client = MockClient::new(HashMap::from([("mock://f2".to_string(), data.clone())]));
         let files = vec![ArtifactDownloadFile {
             rel_path: "params.bin".to_string(),
             url: "mock://f2".to_string(),
@@ -296,7 +296,7 @@ mod tests {
             checksum: Some("00".repeat(32)),
         }];
 
-        let err = download_artifacts_to_sink_with_backend(&backend, &mut sink, &files)
+        let err = download_artifacts_to_sink_with_client(&client, &mut sink, &files)
             .expect_err("checksum mismatch should fail");
 
         match err {
@@ -309,7 +309,7 @@ mod tests {
     fn fails_on_size_mismatch() {
         let data = b"payload".to_vec();
         let mut sink = InMemoryBundleSources::new();
-        let backend = MockBackend::new(HashMap::from([("mock://f3".to_string(), data.clone())]));
+        let client = MockClient::new(HashMap::from([("mock://f3".to_string(), data.clone())]));
         let files = vec![ArtifactDownloadFile {
             rel_path: "params.bin".to_string(),
             url: "mock://f3".to_string(),
@@ -317,7 +317,7 @@ mod tests {
             checksum: None,
         }];
 
-        let err = download_artifacts_to_sink_with_backend(&backend, &mut sink, &files)
+        let err = download_artifacts_to_sink_with_client(&client, &mut sink, &files)
             .expect_err("size mismatch should fail");
 
         match err {

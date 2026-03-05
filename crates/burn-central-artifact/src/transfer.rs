@@ -6,8 +6,8 @@ pub enum TransferError {
     Transport(String),
 }
 
-/// Generic backend interface used by transfer routines.
-pub trait FileTransferBackend: Clone + Send + Sync + 'static {
+/// Generic client interface used for uploading and downloading files, abstracting over the underlying HTTP client or other transport mechanism.
+pub trait FileTransferClient: Clone + Send + Sync + 'static {
     /// Upload data from a reader to the given URL with known size.
     fn put_reader<R: Read + Send + 'static>(
         &self,
@@ -20,13 +20,13 @@ pub trait FileTransferBackend: Clone + Send + Sync + 'static {
     fn get_reader(&self, url: &str) -> Result<Box<dyn Read + Send>, TransferError>;
 }
 
-/// Reqwest-based transfer backend.
+/// Reqwest-based transfer client.
 #[derive(Clone)]
-pub struct ReqwestTransferBackend {
+pub struct ReqwestTransferClient {
     http: reqwest::blocking::Client,
 }
 
-impl ReqwestTransferBackend {
+impl ReqwestTransferClient {
     pub fn new() -> Self {
         Self {
             http: reqwest::blocking::Client::new(),
@@ -38,13 +38,13 @@ impl ReqwestTransferBackend {
     }
 }
 
-impl Default for ReqwestTransferBackend {
+impl Default for ReqwestTransferClient {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FileTransferBackend for ReqwestTransferBackend {
+impl FileTransferClient for ReqwestTransferClient {
     fn put_reader<R: Read + Send + 'static>(
         &self,
         url: &str,
