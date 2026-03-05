@@ -144,29 +144,46 @@ impl BundleSink for FsBundle {
         }
 
         let tmp = temp_path(&dest).map_err(|e| e.to_string())?;
-        let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
+        let mut file = match File::create(&tmp) {
+            Ok(file) => file,
+            Err(e) => {
+                self.seen.remove(&rel);
+                return Err(e.to_string());
+            }
+        };
 
         let mut hasher = sha2::Sha256::new();
         let mut buf = [0u8; 1024 * 64];
         let mut total = 0u64;
 
         loop {
-            let read = reader.read(&mut buf).map_err(|e| e.to_string())?;
+            let read = match reader.read(&mut buf) {
+                Ok(read) => read,
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp);
+                    self.seen.remove(&rel);
+                    return Err(e.to_string());
+                }
+            };
             if read == 0 {
                 break;
             }
-            file.write_all(&buf[..read]).map_err(|e| e.to_string())?;
+            if let Err(e) = file.write_all(&buf[..read]) {
+                let _ = fs::remove_file(&tmp);
+                self.seen.remove(&rel);
+                return Err(e.to_string());
+            }
             hasher.update(&buf[..read]);
             total += read as u64;
         }
 
         let checksum = format!("{:x}", hasher.finalize());
 
-        if dest.exists() {
-            fs::remove_file(&dest).map_err(|e| e.to_string())?;
+        if let Err(err) = finalize_temp_file(&tmp, &dest) {
+            self.seen.remove(&rel);
+            let _ = fs::remove_file(&tmp);
+            return Err(err.to_string());
         }
-
-        fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
 
         self.files.push(FsBundleFile {
             rel_path: rel,
@@ -217,6 +234,14 @@ fn temp_path(dest: &Path) -> Result<PathBuf, std::io::Error> {
         .ok_or_else(|| std::io::Error::other("Missing file name"))?
         .to_string_lossy();
     Ok(dest.with_file_name(format!(".{file_name}.partial")))
+}
+
+fn finalize_temp_file(tmp: &Path, dest: &Path) -> Result<(), std::io::Error> {
+    if dest.exists() {
+        fs::remove_file(dest)?;
+    }
+
+    fs::rename(tmp, dest)
 }
 
 impl MultipartUploadSource for FsBundle {
