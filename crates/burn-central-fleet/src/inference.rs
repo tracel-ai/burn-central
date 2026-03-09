@@ -82,14 +82,6 @@ where
     }
 
     fn maybe_sync_and_rollout(&self) -> Result<(), FleetManagedInferenceError> {
-        let fleet_key = self.current_fleet_key();
-        let reconcile_span = tracing::info_span!(
-            "fleet.inference.reconcile",
-            fleet_key = fleet_key.as_str(),
-            inference_name = self.inference_name.as_str(),
-        );
-        let _reconcile_guard = reconcile_span.enter();
-
         if self.active().is_some() && !self.should_sync_now() {
             return Ok(());
         }
@@ -219,7 +211,7 @@ where
     fn infer(&self, input: Self::Input, writer: InferenceWriter<Self::Output>) {
         let fleet_key = self.current_fleet_key();
         let request_span = tracing::info_span!(
-            "fleet.inference.request",
+            "fleet.inference",
             fleet_key = fleet_key.as_str(),
             inference_name = self.inference_name.as_str(),
         );

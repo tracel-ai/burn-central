@@ -60,9 +60,9 @@ impl EventFieldVisitor {
             self.message = Some(value.clone());
         } else if key == "fleet_key" {
             self.fleet_key = Some(value.clone());
+        } else {
+            self.fields.push(LogField { key, value });
         }
-
-        self.fields.push(LogField { key, value });
     }
 }
 
