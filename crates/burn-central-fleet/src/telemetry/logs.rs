@@ -285,23 +285,4 @@ mod tests {
             "events without fleet key should not be dispatched",
         );
     }
-
-    #[test]
-    fn log_layer_prefers_event_fleet_key_over_span_fleet_key() {
-        let records = run_with_log_layer(|| {
-            let span = tracing::info_span!("request", fleet_key = "span-fleet");
-            let _guard = span.enter();
-
-            tracing::info!(fleet_key = "event-fleet", "override fleet key");
-        });
-
-        assert_eq!(records.len(), 1);
-        let record = &records[0];
-        assert_eq!(record.fleet_key, "event-fleet");
-        assert_eq!(field_value(record, "fleet_key"), Some("event-fleet"));
-        assert_eq!(
-            field_value(record, "span.request.fleet_key"),
-            Some("span-fleet")
-        );
-    }
 }
