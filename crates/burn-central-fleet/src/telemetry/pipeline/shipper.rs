@@ -167,7 +167,7 @@ pub fn start(
                     Ok(_) | Err(RecvTimeoutError::Disconnected) => break,
                     Err(RecvTimeoutError::Timeout) => {}
                 }
-                match outbox.claim(100_000) {
+                match outbox.claim(1000) {
                     Ok(None) => {}
                     Ok(Some(items)) => {
                         let (ids, events): (Vec<_>, Vec<_>) = items.into_iter().unzip();
