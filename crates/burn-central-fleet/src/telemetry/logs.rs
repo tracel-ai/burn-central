@@ -126,7 +126,7 @@ impl TelemetryLogLayer {
     pub(crate) fn current_fleet_key(&self, dispatch: &Dispatch) -> Option<String> {
         let current = dispatch.current_span();
         let id = current.id()?;
-        (self.with_current_fleet_key?)(dispatch, &id)
+        (self.with_current_fleet_key?)(dispatch, id)
     }
 }
 
