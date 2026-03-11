@@ -85,7 +85,7 @@ pub fn tracing_log_layer<S>() -> impl tracing_subscriber::Layer<S>
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
-    TelemetryLogLayer
+    TelemetryLogLayer::default()
 }
 
 /// Initializes global telemetry state.

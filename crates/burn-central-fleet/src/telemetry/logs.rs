@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tracing::Dispatch;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::registry::LookupSpan;
 
@@ -117,12 +118,49 @@ impl SpanFields {
 }
 
 #[derive(Debug, Default)]
-pub struct TelemetryLogLayer;
+pub struct TelemetryLogLayer {
+    with_current_fleet_key: Option<fn(&Dispatch, &tracing::span::Id) -> Option<String>>,
+}
+
+impl TelemetryLogLayer {
+    pub(crate) fn current_fleet_key(&self, dispatch: &Dispatch) -> Option<String> {
+        let current = dispatch.current_span();
+        let id = current.id()?;
+        (self.with_current_fleet_key?)(dispatch, &id)
+    }
+}
+
+/// Retrieves the fleet key from the current span context, if any. Returns None if there is no current span or if no fleet key is associated with the current span.
+pub(crate) fn current_fleet_key() -> Option<String> {
+    tracing::dispatcher::get_default(|dispatch| {
+        dispatch
+            .downcast_ref::<TelemetryLogLayer>()?
+            .current_fleet_key(dispatch)
+    })
+}
 
 impl<S> tracing_subscriber::Layer<S> for TelemetryLogLayer
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
+    fn on_layer(&mut self, _: &mut S) {
+        self.with_current_fleet_key = Some(|dispatch, id| {
+            let subscriber = dispatch.downcast_ref::<S>()?;
+            let span = subscriber.span(id)?;
+            let mut fleet_key = None;
+
+            for scope_span in span.scope().from_root() {
+                if let Some(span_fields) = scope_span.extensions().get::<SpanFields>() {
+                    if let Some(candidate) = span_fields.fleet_key.as_ref() {
+                        fleet_key = Some(candidate.clone());
+                    }
+                }
+            }
+
+            fleet_key
+        });
+    }
+
     fn on_new_span(
         &self,
         attrs: &tracing::span::Attributes<'_>,
@@ -222,7 +260,7 @@ mod tests {
             .expect("test serial lock should not be poisoned");
         super::super::clear_dispatched_log_records_for_test();
 
-        let subscriber = tracing_subscriber::registry().with(TelemetryLogLayer);
+        let subscriber = tracing_subscriber::registry().with(TelemetryLogLayer::default());
         tracing::subscriber::with_default(subscriber, test_fn);
 
         super::super::take_dispatched_log_records_for_test()

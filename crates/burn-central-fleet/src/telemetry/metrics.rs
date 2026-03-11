@@ -4,6 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use super::logs::current_fleet_key;
+
+const FLEET_KEY_LABEL: &str = "fleet_key";
+
 #[derive(Debug)]
 struct InnerRegistry {
     registry: metrics_util::registry::Registry<metrics::Key, metrics_util::registry::AtomicStorage>,
@@ -36,7 +40,7 @@ impl InnerRegistry {
             .into()
     }
 
-    fn snapshot(&self) -> MetricBatch {
+    fn snapshot(&self, fleet_key: &str) -> MetricBatch {
         let mut counters = Vec::new();
         let mut gauges = Vec::new();
         {
@@ -44,6 +48,10 @@ impl InnerRegistry {
 
             self.registry.visit_counters(|key, counter| {
                 let key = MetricKey::from_key(key);
+                if !key.has_label(FLEET_KEY_LABEL, fleet_key) {
+                    return;
+                }
+
                 let value = counter.load(Ordering::Acquire);
                 let previous = delta_store.counter_values.insert(key.clone(), value);
                 let delta = previous.map_or(value, |last_value| value.saturating_sub(last_value));
@@ -59,6 +67,10 @@ impl InnerRegistry {
                 }
 
                 let key = MetricKey::from_key(key);
+                if !key.has_label(FLEET_KEY_LABEL, fleet_key) {
+                    return;
+                }
+
                 let previous = delta_store.gauge_values.get(&key).copied();
                 if previous != Some(value) {
                     gauges.push(MetricGauge {
@@ -74,11 +86,15 @@ impl InnerRegistry {
 
         let mut histograms = Vec::new();
         self.registry.visit_histograms(|key, histogram| {
+            let key = MetricKey::from_key(key);
+            if !key.has_label(FLEET_KEY_LABEL, fleet_key) {
+                return;
+            }
+
             let mut samples = Vec::new();
             histogram.clear_with(|chunk| samples.extend_from_slice(chunk));
 
-            if let Some(summary) = MetricHistogram::from_samples(MetricKey::from_key(key), samples)
-            {
+            if let Some(summary) = MetricHistogram::from_samples(key, samples) {
                 histograms.push(summary);
             }
         });
@@ -98,6 +114,10 @@ impl InnerRegistry {
         unit: Option<metrics::Unit>,
         description: metrics::SharedString,
     ) {
+        let Some(fleet_key) = current_fleet_key() else {
+            return;
+        };
+
         let descriptor = MetricDescriptor {
             name: key.as_str().to_string(),
             kind,
@@ -107,26 +127,44 @@ impl InnerRegistry {
         let descriptor_key = MetricDescriptorKey::new(descriptor.name.clone(), descriptor.kind);
 
         let mut store_guard = self.descriptor_store.lock().unwrap();
-        let changed = store_guard.descriptors.get(&descriptor_key) != Some(&descriptor);
+        let fleet_store = store_guard.by_fleet.entry(fleet_key).or_default();
+        let changed = fleet_store.descriptors.get(&descriptor_key) != Some(&descriptor);
         if changed {
-            store_guard
+            fleet_store
                 .descriptors
                 .insert(descriptor_key.clone(), descriptor);
-            store_guard.dirty.insert(descriptor_key);
+            fleet_store.dirty.insert(descriptor_key);
         }
     }
 
-    fn take_descriptor_delta(&self) -> MetricDescriptorBatch {
+    fn take_descriptor_delta(&self, fleet_key: &str) -> MetricDescriptorBatch {
         let mut store_guard = self.descriptor_store.lock().unwrap();
-        let dirty_keys = store_guard.dirty.iter().cloned().collect::<Vec<_>>();
+        let Some(fleet_store) = store_guard.by_fleet.get_mut(fleet_key) else {
+            return MetricDescriptorBatch {
+                descriptors: Vec::new(),
+            };
+        };
+
+        let dirty_keys = fleet_store.dirty.iter().cloned().collect::<Vec<_>>();
         let mut descriptors = Vec::with_capacity(dirty_keys.len());
         for key in dirty_keys {
-            if let Some(descriptor) = store_guard.descriptors.get(&key) {
+            if let Some(descriptor) = fleet_store.descriptors.get(&key) {
                 descriptors.push(descriptor.clone());
             }
         }
-        store_guard.dirty.clear();
+        fleet_store.dirty.clear();
         MetricDescriptorBatch { descriptors }
+    }
+
+    fn remove_descriptor_consumer(&self, fleet_key: &str) {
+        let mut store_guard = self.descriptor_store.lock().unwrap();
+        let Some(fleet_store) = store_guard.by_fleet.get_mut(fleet_key) else {
+            return;
+        };
+
+        fleet_store
+            .dirty
+            .extend(fleet_store.descriptors.keys().cloned());
     }
 }
 
@@ -139,13 +177,18 @@ impl RecorderHandle {
     /// Produces a snapshot of recorded metrics.
     /// Counters are emitted as positive deltas since the prior snapshot.
     /// Gauges are emitted only when their value changes.
-    pub fn snapshot(&self) -> MetricBatch {
-        self.registry.snapshot()
+    /// Histograms are emitted as full snapshots of all recorded samples, and are cleared after each snapshot.
+    pub fn snapshot(&self, fleet_key: &str) -> MetricBatch {
+        self.registry.snapshot(fleet_key)
     }
 
-    /// Drains newly registered or updated metric descriptors since the last call.
-    pub fn take_descriptor_delta(&self) -> MetricDescriptorBatch {
-        self.registry.take_descriptor_delta()
+    /// Drains newly registered or updated metric descriptors for a single fleet.
+    pub fn take_descriptor_delta(&self, fleet_key: &str) -> MetricDescriptorBatch {
+        self.registry.take_descriptor_delta(fleet_key)
+    }
+
+    pub fn remove_descriptor_consumer(&self, fleet_key: &str) {
+        self.registry.remove_descriptor_consumer(fleet_key);
     }
 }
 
@@ -266,6 +309,11 @@ impl MetricDescriptorKey {
 
 #[derive(Debug, Default)]
 struct DescriptorStore {
+    by_fleet: BTreeMap<String, FleetDescriptorStore>,
+}
+
+#[derive(Debug, Default)]
+struct FleetDescriptorStore {
     descriptors: BTreeMap<MetricDescriptorKey, MetricDescriptor>,
     dirty: BTreeSet<MetricDescriptorKey>,
 }
@@ -303,6 +351,12 @@ impl MetricKey {
             name: key.name().to_string(),
             labels,
         }
+    }
+
+    fn has_label(&self, key: &str, value: &str) -> bool {
+        self.labels
+            .iter()
+            .any(|label| label.key == key && label.value == value)
     }
 }
 
@@ -374,6 +428,37 @@ impl MetricHistogram {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    const TEST_FLEET_KEY: &str = "fleet-a";
+
+    fn with_fleet_span(fleet_key: &str, test_fn: impl FnOnce()) {
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::telemetry::logs::TelemetryLogLayer::default());
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("test.metric_descriptor", fleet_key = fleet_key);
+            let _guard = span.enter();
+            test_fn();
+        });
+    }
+
+    fn describe_counter_for_fleet(
+        recorder: &InMemoryMetricsRecorder,
+        fleet_key: &str,
+        name: &str,
+        description: &str,
+    ) {
+        let name = name.to_string();
+        let description = description.to_string();
+        with_fleet_span(fleet_key, || {
+            metrics::Recorder::describe_counter(
+                recorder,
+                name.into(),
+                Some(metrics::Unit::Count),
+                description.into(),
+            );
+        });
+    }
 
     #[test]
     fn snapshot_collects_counter_gauge_and_histogram() {
@@ -381,13 +466,17 @@ mod tests {
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
-            metrics::counter!("fleet.counter", "kind" => "request").increment(3);
-            metrics::gauge!("fleet.gauge", "kind" => "memory").set(12.5);
-            metrics::histogram!("fleet.hist", "kind" => "latency").record(2.0);
-            metrics::histogram!("fleet.hist", "kind" => "latency").record(4.0);
+            metrics::counter!("fleet.counter", "kind" => "request", "fleet_key" => TEST_FLEET_KEY)
+                .increment(3);
+            metrics::gauge!("fleet.gauge", "kind" => "memory", "fleet_key" => TEST_FLEET_KEY)
+                .set(12.5);
+            metrics::histogram!("fleet.hist", "kind" => "latency", "fleet_key" => TEST_FLEET_KEY)
+                .record(2.0);
+            metrics::histogram!("fleet.hist", "kind" => "latency", "fleet_key" => TEST_FLEET_KEY)
+                .record(4.0);
         });
 
-        let batch = handle.snapshot();
+        let batch = handle.snapshot(TEST_FLEET_KEY);
 
         let counter = batch
             .counters
@@ -419,11 +508,11 @@ mod tests {
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
-            metrics::histogram!("fleet.hist.drain").record(1.0);
-            metrics::histogram!("fleet.hist.drain").record(3.0);
+            metrics::histogram!("fleet.hist.drain", "fleet_key" => TEST_FLEET_KEY).record(1.0);
+            metrics::histogram!("fleet.hist.drain", "fleet_key" => TEST_FLEET_KEY).record(3.0);
         });
 
-        let first = handle.snapshot();
+        let first = handle.snapshot(TEST_FLEET_KEY);
         let first_hist = first
             .histograms
             .iter()
@@ -431,7 +520,7 @@ mod tests {
             .expect("first snapshot should contain histogram");
         assert_eq!(first_hist.count, 2);
 
-        let second = handle.snapshot();
+        let second = handle.snapshot(TEST_FLEET_KEY);
         let second_hist = second
             .histograms
             .iter()
@@ -445,12 +534,22 @@ mod tests {
         let handle = recorder.handle();
 
         metrics::with_local_recorder(&recorder, || {
-            metrics::counter!("fleet.counter.persist", "kind" => "request").increment(5);
-            metrics::gauge!("fleet.gauge.persist", "kind" => "memory").set(64.0);
+            metrics::counter!(
+                "fleet.counter.persist",
+                "kind" => "request",
+                "fleet_key" => TEST_FLEET_KEY
+            )
+            .increment(5);
+            metrics::gauge!(
+                "fleet.gauge.persist",
+                "kind" => "memory",
+                "fleet_key" => TEST_FLEET_KEY
+            )
+            .set(64.0);
         });
 
-        let first = handle.snapshot();
-        let second = handle.snapshot();
+        let first = handle.snapshot(TEST_FLEET_KEY);
+        let second = handle.snapshot(TEST_FLEET_KEY);
 
         let first_counter = first
             .counters
@@ -469,11 +568,21 @@ mod tests {
         assert!(second.gauges.is_empty());
 
         metrics::with_local_recorder(&recorder, || {
-            metrics::counter!("fleet.counter.persist", "kind" => "request").increment(2);
-            metrics::gauge!("fleet.gauge.persist", "kind" => "memory").set(64.0);
+            metrics::counter!(
+                "fleet.counter.persist",
+                "kind" => "request",
+                "fleet_key" => TEST_FLEET_KEY
+            )
+            .increment(2);
+            metrics::gauge!(
+                "fleet.gauge.persist",
+                "kind" => "memory",
+                "fleet_key" => TEST_FLEET_KEY
+            )
+            .set(64.0);
         });
 
-        let third = handle.snapshot();
+        let third = handle.snapshot(TEST_FLEET_KEY);
         let third_counter = third
             .counters
             .iter()
@@ -483,10 +592,15 @@ mod tests {
         assert!(third.gauges.is_empty());
 
         metrics::with_local_recorder(&recorder, || {
-            metrics::gauge!("fleet.gauge.persist", "kind" => "memory").set(96.0);
+            metrics::gauge!(
+                "fleet.gauge.persist",
+                "kind" => "memory",
+                "fleet_key" => TEST_FLEET_KEY
+            )
+            .set(96.0);
         });
 
-        let fourth = handle.snapshot();
+        let fourth = handle.snapshot(TEST_FLEET_KEY);
         assert!(fourth.counters.is_empty());
         let fourth_gauge = fourth
             .gauges
@@ -501,20 +615,22 @@ mod tests {
         let recorder = InMemoryMetricsRecorder::new();
         let handle = recorder.handle();
 
-        metrics::Recorder::describe_counter(
-            &recorder,
-            "fleet.requests.total".into(),
-            Some(metrics::Unit::Count),
-            "Total request count".into(),
-        );
-        metrics::Recorder::describe_histogram(
-            &recorder,
-            "fleet.request.duration".into(),
-            Some(metrics::Unit::Milliseconds),
-            "Request duration".into(),
-        );
+        with_fleet_span(TEST_FLEET_KEY, || {
+            metrics::Recorder::describe_counter(
+                &recorder,
+                "fleet.requests.total".into(),
+                Some(metrics::Unit::Count),
+                "Total request count".into(),
+            );
+            metrics::Recorder::describe_histogram(
+                &recorder,
+                "fleet.request.duration".into(),
+                Some(metrics::Unit::Milliseconds),
+                "Request duration".into(),
+            );
+        });
 
-        let first = handle.take_descriptor_delta();
+        let first = handle.take_descriptor_delta(TEST_FLEET_KEY);
         assert_eq!(first.descriptors.len(), 2);
         assert!(first.descriptors.iter().any(|descriptor| {
             descriptor.name == "fleet.requests.total"
@@ -529,12 +645,87 @@ mod tests {
                 && descriptor.description == "Request duration"
         }));
 
-        let second = handle.take_descriptor_delta();
+        let second = handle.take_descriptor_delta(TEST_FLEET_KEY);
         assert!(second.descriptors.is_empty());
     }
 
     #[test]
     fn descriptor_delta_only_emits_changes() {
+        let recorder = InMemoryMetricsRecorder::new();
+        let handle = recorder.handle();
+
+        with_fleet_span(TEST_FLEET_KEY, || {
+            metrics::Recorder::describe_counter(
+                &recorder,
+                "fleet.requests.total".into(),
+                Some(metrics::Unit::Count),
+                "Total requests".into(),
+            );
+        });
+        let _ = handle.take_descriptor_delta(TEST_FLEET_KEY);
+
+        with_fleet_span(TEST_FLEET_KEY, || {
+            metrics::Recorder::describe_counter(
+                &recorder,
+                "fleet.requests.total".into(),
+                Some(metrics::Unit::Count),
+                "Total requests".into(),
+            );
+        });
+        let unchanged = handle.take_descriptor_delta(TEST_FLEET_KEY);
+        assert!(unchanged.descriptors.is_empty());
+
+        with_fleet_span(TEST_FLEET_KEY, || {
+            metrics::Recorder::describe_counter(
+                &recorder,
+                "fleet.requests.total".into(),
+                Some(metrics::Unit::Count),
+                "Total requests seen".into(),
+            );
+        });
+        let changed = handle.take_descriptor_delta(TEST_FLEET_KEY);
+        assert_eq!(changed.descriptors.len(), 1);
+        assert_eq!(changed.descriptors[0].description, "Total requests seen");
+    }
+
+    #[test]
+    fn snapshot_isolated_by_fleet_key() {
+        let recorder = InMemoryMetricsRecorder::new();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            metrics::counter!("fleet.counter.multi", "fleet_key" => "fleet-a").increment(3);
+            metrics::counter!("fleet.counter.multi", "fleet_key" => "fleet-b").increment(7);
+        });
+
+        let fleet_a = handle.snapshot("fleet-a");
+        let fleet_b = handle.snapshot("fleet-b");
+
+        assert_eq!(fleet_a.counters.len(), 1);
+        assert_eq!(fleet_a.counters[0].value, 3);
+        assert_eq!(fleet_b.counters.len(), 1);
+        assert_eq!(fleet_b.counters[0].value, 7);
+    }
+
+    #[test]
+    fn descriptor_delta_isolated_by_fleet_key() {
+        let recorder = InMemoryMetricsRecorder::new();
+        let handle = recorder.handle();
+
+        describe_counter_for_fleet(&recorder, "fleet-a", "fleet.requests.a", "Fleet A requests");
+        describe_counter_for_fleet(&recorder, "fleet-b", "fleet.requests.b", "Fleet B requests");
+
+        let fleet_a = handle.take_descriptor_delta("fleet-a");
+        let fleet_b = handle.take_descriptor_delta("fleet-b");
+
+        assert_eq!(fleet_a.descriptors.len(), 1);
+        assert_eq!(fleet_a.descriptors[0].name, "fleet.requests.a");
+        assert_eq!(fleet_b.descriptors.len(), 1);
+        assert_eq!(fleet_b.descriptors[0].name, "fleet.requests.b");
+    }
+
+    #[test]
+    fn descriptor_delta_ignores_descriptions_without_fleet_context() {
         let recorder = InMemoryMetricsRecorder::new();
         let handle = recorder.handle();
 
@@ -544,25 +735,18 @@ mod tests {
             Some(metrics::Unit::Count),
             "Total requests".into(),
         );
-        let _ = handle.take_descriptor_delta();
 
-        metrics::Recorder::describe_counter(
-            &recorder,
-            "fleet.requests.total".into(),
-            Some(metrics::Unit::Count),
-            "Total requests".into(),
+        assert!(
+            handle
+                .take_descriptor_delta("fleet-a")
+                .descriptors
+                .is_empty()
         );
-        let unchanged = handle.take_descriptor_delta();
-        assert!(unchanged.descriptors.is_empty());
-
-        metrics::Recorder::describe_counter(
-            &recorder,
-            "fleet.requests.total".into(),
-            Some(metrics::Unit::Count),
-            "Total requests seen".into(),
+        assert!(
+            handle
+                .take_descriptor_delta("fleet-b")
+                .descriptors
+                .is_empty()
         );
-        let changed = handle.take_descriptor_delta();
-        assert_eq!(changed.descriptors.len(), 1);
-        assert_eq!(changed.descriptors[0].description, "Total requests seen");
     }
 }
