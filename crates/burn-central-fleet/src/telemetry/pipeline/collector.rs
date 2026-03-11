@@ -40,12 +40,16 @@ impl Drop for CollectorHandle {
 }
 
 pub struct MetricsEventCollector {
+    fleet_key: String,
     recorder: RecorderHandle,
 }
 
 impl MetricsEventCollector {
-    pub fn new(recorder: RecorderHandle) -> Self {
-        Self { recorder }
+    pub fn new(fleet_key: impl Into<String>, recorder: RecorderHandle) -> Self {
+        Self {
+            fleet_key: fleet_key.into(),
+            recorder,
+        }
     }
 }
 
@@ -53,17 +57,23 @@ impl Collector for MetricsEventCollector {
     fn collect(&self) -> Result<Vec<TelemetryEvent>, String> {
         let mut events = Vec::new();
 
-        let descriptor_delta = self.recorder.take_descriptor_delta();
+        let descriptor_delta = self.recorder.take_descriptor_delta(&self.fleet_key);
         if !descriptor_delta.descriptors.is_empty() {
             events.push(TelemetryEvent::metric_descriptors(descriptor_delta));
         }
 
-        let snapshot = self.recorder.snapshot();
+        let snapshot = self.recorder.snapshot(&self.fleet_key);
         if !snapshot.is_empty() {
             events.push(TelemetryEvent::metrics(snapshot));
         }
 
         Ok(events)
+    }
+}
+
+impl Drop for MetricsEventCollector {
+    fn drop(&mut self) {
+        self.recorder.remove_descriptor_consumer(&self.fleet_key);
     }
 }
 
