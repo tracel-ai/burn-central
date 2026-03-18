@@ -144,7 +144,7 @@ where
 
         let active = self.active();
         if active.as_ref().map(|a| &a.model_version) == Some(&fleet_version) {
-            tracing::info!(
+            tracing::debug!(
                 version = &fleet_version,
                 "fleet model version is same as active, skipping rollout"
             );

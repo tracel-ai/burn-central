@@ -228,7 +228,7 @@ pub fn start(
                 if !should_drain {
                     let retry_rx = match backoff_until {
                         Some(deadline) => {
-                            tracing::debug!(
+                            tracing::trace!(
                                 "backing off telemetry shipper for {:?} until {:?} after {} consecutive failures",
                                 deadline.saturating_duration_since(std::time::Instant::now()),
                                 deadline,
@@ -237,7 +237,7 @@ pub fn start(
                             after(deadline.saturating_duration_since(std::time::Instant::now()))
                         }
                         None => {
-                            tracing::debug!("telemetry shipper is idle, waiting for wake signal or idle tick");
+                            tracing::trace!("telemetry shipper is idle, waiting for wake signal or idle tick");
                             never()
                         },
                     };
@@ -245,15 +245,15 @@ pub fn start(
                     select! {
                         recv(shutdown_rx) -> _ => break,
                         recv(wake_rx) -> _ => {
-                            tracing::debug!("received shipper wake signal");
+                            tracing::trace!("received shipper wake signal");
                             should_drain = true;
                         }
                         recv(idle_tick_rx) -> _ => {
-                            tracing::debug!("received shipper idle tick");
+                            tracing::trace!("received shipper idle tick");
                             should_drain = true;
                         }
                         recv(retry_rx) -> _ => {
-                            tracing::debug!("backoff timer expired, retrying telemetry ship");
+                            tracing::trace!("backoff timer expired, retrying telemetry ship");
                             backoff_until = None;
                             should_drain = true;
                         }
@@ -284,7 +284,7 @@ pub fn start(
                 loop {
                     let items = match outbox.claim(config.max_batch_size) {
                         Ok(None) => {
-                            tracing::debug!("no telemetry outbox items to ship");
+                            tracing::trace!("no telemetry outbox items to ship");
                             consecutive_failures = 0;
                             break;
                         }
@@ -319,7 +319,7 @@ pub fn start(
                             continue;
                         }
                         Err(e) => {
-                            tracing::error!("failed to ship telemetry batch: {e}");
+                            tracing::warn!("failed to ship telemetry batch: {e}");
                             for id in ids {
                                 if let Err(err) = outbox.fail(id, &e) {
                                     tracing::error!(

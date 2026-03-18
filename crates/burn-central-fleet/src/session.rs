@@ -38,7 +38,7 @@ impl FleetDeviceSession {
         let identity_key = store.load_or_create_machine_identity_key()?;
         let mut state = store.load_fleet_state(&fleet_key)?.unwrap_or_default();
         if state.auth_token().is_some_and(|auth| !auth.is_valid()) {
-            tracing::info!(
+            tracing::debug!(
                 fleet_key = %fleet_key,
                 "found expired fleet auth token in local state, clearing it"
             );
@@ -106,7 +106,7 @@ impl FleetDeviceSession {
     }
 
     fn sync(&mut self, metadata: Option<DeviceMetadata>) -> Result<(), FleetError> {
-        tracing::info!(
+        tracing::debug!(
             ?metadata,
             "syncing fleet device with fleet management service"
         );
@@ -120,14 +120,14 @@ impl FleetDeviceSession {
                 false
             }
             Some(_) => {
-                tracing::info!(
+                tracing::debug!(
                     "existing auth token expired, requesting a new one from fleet management service"
                 );
                 self.clear_expired_auth_token()?;
                 true
             }
             None => {
-                tracing::info!(
+                tracing::debug!(
                     "no existing auth token, requesting new one from fleet management service"
                 );
                 true
@@ -136,7 +136,7 @@ impl FleetDeviceSession {
 
         if should_refresh_token {
             self.refresh_auth_token(metadata.clone())?;
-            tracing::info!("successfully refreshed auth token");
+            tracing::debug!("successfully refreshed auth token");
         }
         let snapshot = self
             .client

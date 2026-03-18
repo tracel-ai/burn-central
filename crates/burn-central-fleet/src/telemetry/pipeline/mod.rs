@@ -118,7 +118,9 @@ impl TelemetryPipeline {
             &format!("telemetry-shipper-{fleet_key}"),
             outbox,
             shipper_wake_rx,
-            Arc::new(shipper::BurnCentralFleetShipperTransport::new(client.clone())),
+            Arc::new(shipper::BurnCentralFleetShipperTransport::new(
+                client.clone(),
+            )),
             ShipperConfig {
                 idle_sweep_interval: SHIPPER_IDLE_SWEEP_INTERVAL,
                 min_retry_interval: Duration::from_secs(5),

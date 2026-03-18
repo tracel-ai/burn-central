@@ -123,7 +123,7 @@ impl MetricsEventCollector {
     }
 
     fn run(self, outbox: Arc<dyn Outbox>, shutdown_rx: Receiver<()>) {
-        tracing::debug!(interval = ?self.interval, "starting metrics collector");
+        tracing::trace!(interval = ?self.interval, "starting metrics collector");
         let ticker = tick(self.interval);
         let outbox = outbox.as_ref();
         loop {
@@ -134,7 +134,7 @@ impl MetricsEventCollector {
                     break;
                 }
                 recv(ticker) -> _ => {
-                    tracing::debug!("received metrics collector tick");
+                    tracing::trace!("received metrics collector tick");
                     self.emit(outbox);
                 }
             }
@@ -219,7 +219,7 @@ impl LogsCollector {
         let mut flush_deadline = None;
         let outbox = outbox.as_ref();
 
-        tracing::debug!(
+        tracing::trace!(
             max_batch_entries = self.max_batch_entries,
             flush_interval = ?self.flush_interval,
             "starting logs collector"
@@ -256,7 +256,7 @@ impl LogsCollector {
                         Ok(record) => {
                             entries.push(record);
                             flush_deadline = Some(Instant::now() + self.flush_interval);
-                            tracing::debug!(
+                            tracing::trace!(
                                 buffered_entries = entries.len(),
                                 flush_interval = ?self.flush_interval,
                                 "received first log entry for batch, scheduled flush deadline"
