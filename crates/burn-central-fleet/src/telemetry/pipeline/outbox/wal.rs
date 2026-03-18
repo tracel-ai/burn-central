@@ -8,7 +8,7 @@ use std::{
 
 use crate::telemetry::{
     event::TelemetryEvent,
-    pipeline::{Outbox, OutboxId},
+    pipeline::outbox::{Outbox, OutboxId},
 };
 
 #[derive(Debug)]

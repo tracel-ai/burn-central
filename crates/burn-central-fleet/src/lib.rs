@@ -1,3 +1,4 @@
+mod auth_client;
 mod error;
 mod inference;
 mod model;

@@ -11,7 +11,7 @@ use super::super::{
     metrics::RecorderHandle,
 };
 
-use super::Outbox;
+use super::outbox::Outbox;
 
 pub(super) struct LogIngress {
     sender: Sender<LogRecord>,
@@ -85,35 +85,56 @@ impl MetricsEventCollector {
     }
 
     pub fn start(self, name: &str, outbox: Arc<dyn Outbox>) -> CollectorHandle {
-        CollectorHandle::spawn(name, move |shutdown_rx| self.run(outbox, shutdown_rx))
+        let span = tracing::info_span!("metrics_collector", name);
+        CollectorHandle::spawn(name, move |shutdown_rx| {
+            let _guard = span.enter();
+            self.run(outbox, shutdown_rx)
+        })
     }
 
     fn emit(&self, outbox: &dyn Outbox) {
         let mut events = Vec::new();
 
         let descriptor_delta = self.recorder.take_descriptor_delta(&self.fleet_key);
+        let descriptor_count = descriptor_delta.descriptors.len();
         if !descriptor_delta.descriptors.is_empty() {
             events.push(TelemetryEvent::metric_descriptors(descriptor_delta));
         }
 
         let snapshot = self.recorder.snapshot(&self.fleet_key);
+        let counter_count = snapshot.counters.len();
+        let gauge_count = snapshot.gauges.len();
+        let histogram_count = snapshot.histograms.len();
         if !snapshot.is_empty() {
             events.push(TelemetryEvent::metrics(snapshot));
+        }
+
+        if !events.is_empty() {
+            tracing::debug!(
+                descriptor_count,
+                counter_count,
+                gauge_count,
+                histogram_count,
+                "emitting metrics telemetry batch"
+            );
         }
 
         enqueue_events(outbox, events);
     }
 
     fn run(self, outbox: Arc<dyn Outbox>, shutdown_rx: Receiver<()>) {
+        tracing::debug!(interval = ?self.interval, "starting metrics collector");
         let ticker = tick(self.interval);
         let outbox = outbox.as_ref();
         loop {
             select! {
                 recv(shutdown_rx) -> _ => {
+                    tracing::debug!("received metrics collector shutdown, emitting final snapshot");
                     self.emit(outbox);
                     break;
                 }
                 recv(ticker) -> _ => {
+                    tracing::debug!("received metrics collector tick");
                     self.emit(outbox);
                 }
             }
@@ -127,6 +148,8 @@ impl Drop for MetricsEventCollector {
     }
 }
 
+const LOG_INGRESS_CAPACITY: usize = 4_096;
+
 pub struct LogsCollector {
     ingress_rx: Receiver<LogRecord>,
     max_batch_entries: usize,
@@ -137,11 +160,10 @@ impl LogsCollector {
     pub fn spawn(
         name: &str,
         outbox: Arc<dyn Outbox>,
-        ingress_capacity: usize,
         max_batch_entries: usize,
         flush_interval: Duration,
     ) -> (LogIngress, CollectorHandle) {
-        let (ingress, ingress_rx) = LogIngress::bounded(ingress_capacity);
+        let (ingress, ingress_rx) = LogIngress::bounded(LOG_INGRESS_CAPACITY);
         let handle = Self::new(ingress_rx, max_batch_entries, flush_interval).start(name, outbox);
         (ingress, handle)
     }
@@ -159,7 +181,11 @@ impl LogsCollector {
     }
 
     pub fn start(self, name: &str, outbox: Arc<dyn Outbox>) -> CollectorHandle {
-        CollectorHandle::spawn(name, move |shutdown_rx| self.run(outbox, shutdown_rx))
+        let span = tracing::info_span!("logs_collector", name);
+        CollectorHandle::spawn(name, move |shutdown_rx| {
+            let _guard = span.enter();
+            self.run(outbox, shutdown_rx)
+        })
     }
 
     fn flush(&self, outbox: &dyn Outbox, entries: &mut Vec<LogRecord>) {
@@ -178,7 +204,10 @@ impl LogsCollector {
             match self.ingress_rx.try_recv() {
                 Ok(record) => entries.push(record),
                 Err(crossbeam::channel::TryRecvError::Empty) => return false,
-                Err(crossbeam::channel::TryRecvError::Disconnected) => return true,
+                Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                    tracing::debug!("log ingress disconnected while draining buffered records");
+                    return true;
+                }
             }
         }
 
@@ -190,8 +219,18 @@ impl LogsCollector {
         let mut flush_deadline = None;
         let outbox = outbox.as_ref();
 
+        tracing::debug!(
+            max_batch_entries = self.max_batch_entries,
+            flush_interval = ?self.flush_interval,
+            "starting logs collector"
+        );
+
         loop {
             if entries.len() >= self.max_batch_entries {
+                tracing::debug!(
+                    "log batch reached max capacity of {}, flushing",
+                    self.max_batch_entries
+                );
                 self.flush(outbox, &mut entries);
                 flush_deadline = None;
                 continue;
@@ -199,6 +238,7 @@ impl LogsCollector {
 
             if let Some(deadline) = flush_deadline {
                 if Instant::now() >= deadline {
+                    tracing::debug!("log batch flush deadline reached, flushing");
                     self.flush(outbox, &mut entries);
                     flush_deadline = None;
                     continue;
@@ -208,6 +248,7 @@ impl LogsCollector {
             if entries.is_empty() {
                 select! {
                     recv(shutdown_rx) -> _ => {
+                        tracing::debug!("received logs collector shutdown");
                         self.flush(outbox, &mut entries);
                         break;
                     }
@@ -215,12 +256,22 @@ impl LogsCollector {
                         Ok(record) => {
                             entries.push(record);
                             flush_deadline = Some(Instant::now() + self.flush_interval);
+                            tracing::debug!(
+                                buffered_entries = entries.len(),
+                                flush_interval = ?self.flush_interval,
+                                "received first log entry for batch, scheduled flush deadline"
+                            );
                             if self.drain_ready(&mut entries) {
+                                tracing::debug!(
+                                    buffered_entries = entries.len(),
+                                    "flushing final log batch after ingress disconnect"
+                                );
                                 self.flush(outbox, &mut entries);
                                 break;
                             }
                         }
                         Err(_) => {
+                            tracing::debug!("log ingress disconnected, stopping logs collector");
                             self.flush(outbox, &mut entries);
                             break;
                         }
@@ -234,6 +285,10 @@ impl LogsCollector {
                 .saturating_duration_since(Instant::now());
             select! {
                 recv(shutdown_rx) -> _ => {
+                    tracing::debug!(
+                        buffered_entries = entries.len(),
+                        "received logs collector shutdown, flushing buffered entries"
+                    );
                     self.flush(outbox, &mut entries);
                     break;
                 }
@@ -241,11 +296,19 @@ impl LogsCollector {
                     Ok(record) => {
                         entries.push(record);
                         if self.drain_ready(&mut entries) {
+                            tracing::debug!(
+                                buffered_entries = entries.len(),
+                                "flushing final log batch after ingress disconnect"
+                            );
                             self.flush(outbox, &mut entries);
                             break;
                         }
                     }
                     Err(_) => {
+                        tracing::debug!(
+                            buffered_entries = entries.len(),
+                            "log ingress disconnected, flushing buffered entries and stopping"
+                        );
                         self.flush(outbox, &mut entries);
                         break;
                     }
@@ -275,7 +338,7 @@ mod tests {
         event::TelemetryData,
         logs::LogRecord,
         metrics::{InMemoryMetricsRecorder, MetricDescriptorKind},
-        pipeline::OutboxId,
+        pipeline::outbox::OutboxId,
     };
     use tracing_subscriber::layer::SubscriberExt;
 

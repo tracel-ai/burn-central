@@ -78,6 +78,10 @@ impl FleetState {
         });
     }
 
+    pub fn clear_auth_token(&mut self) {
+        self.auth = None;
+    }
+
     pub fn update(&mut self, model_version_id: String, runtime_config: serde_json::Value) {
         self.updated_at = chrono::Utc::now().to_rfc3339();
         self.active_model_version_id = model_version_id;
