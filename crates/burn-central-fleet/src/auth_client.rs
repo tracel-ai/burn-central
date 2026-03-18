@@ -99,6 +99,6 @@ impl AuthenticatedFleetClient {
             .as_ref()
             .map(|token| token.token())
             .ok_or(AuthenticatedFleetClientError::MissingAuthToken)
-            .and_then(|token| f(token))
+            .and_then(f)
     }
 }
