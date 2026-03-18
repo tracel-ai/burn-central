@@ -1,12 +1,8 @@
 use burn_central_client::FleetClient;
-use crossbeam_queue::SegQueue;
 
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -37,42 +33,14 @@ pub trait Outbox: Send + Sync {
 }
 
 const LOG_INGRESS_CAPACITY: usize = 4_096;
-
-#[derive(Debug, Default)]
-
-struct LogIngress {
-    queue: SegQueue<LogRecord>,
-    depth: AtomicUsize,
-}
-
-impl LogIngress {
-    fn push(&self, record: LogRecord) -> bool {
-        let previous = self.depth.fetch_add(1, Ordering::AcqRel);
-        if previous >= LOG_INGRESS_CAPACITY {
-            self.depth.fetch_sub(1, Ordering::AcqRel);
-            return false;
-        }
-
-        self.queue.push(record);
-        true
-    }
-
-    fn pop_batch(&self, max_entries: usize) -> Vec<LogRecord> {
-        let mut entries = Vec::with_capacity(max_entries);
-        for _ in 0..max_entries {
-            let Some(record) = self.queue.pop() else {
-                break;
-            };
-            self.depth.fetch_sub(1, Ordering::AcqRel);
-            entries.push(record);
-        }
-        entries
-    }
-}
+const METRICS_EMIT_INTERVAL: Duration = Duration::from_secs(60);
+const LOG_FLUSH_INTERVAL: Duration = Duration::from_secs(60);
+const LOG_BATCH_MAX_ENTRIES: usize = 256;
+const SHIPPER_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct TelemetryPipeline {
     fleet_key: String,
-    log_ingress: Arc<LogIngress>,
+    log_ingress: collector::LogIngress,
     collector_handles: Vec<collector::CollectorHandle>,
     shipper_handle: shipper::ShipperHandle,
 }
@@ -105,7 +73,7 @@ impl TelemetryPipeline {
     }
 
     pub(crate) fn enqueue_log(&self, record: LogRecord) {
-        let _ = self.log_ingress.push(record);
+        self.log_ingress.push(record);
     }
 
     fn start(
@@ -125,24 +93,22 @@ impl TelemetryPipeline {
                 ),
             )
         })?);
-        let log_ingress = Arc::new(LogIngress::default());
+        let (log_ingress, logs_collector_handle) = collector::LogsCollector::spawn(
+            "telemetry-collector-logs",
+            outbox.clone(),
+            LOG_INGRESS_CAPACITY,
+            LOG_BATCH_MAX_ENTRIES,
+            LOG_FLUSH_INTERVAL,
+        );
 
         let collector_handles = vec![
-            collector::start(
-                "telemetry-collector-metrics",
-                Arc::new(collector::MetricsEventCollector::new(
-                    fleet_key.clone(),
-                    recorder,
-                )),
-                outbox.clone(),
-                Duration::from_secs(5),
-            ),
-            collector::start(
-                "telemetry-collector-logs",
-                Arc::new(collector::LogsCollector::new(log_ingress.clone(), 256)),
-                outbox.clone(),
-                Duration::from_secs(2),
-            ),
+            collector::MetricsEventCollector::new(
+                fleet_key.clone(),
+                recorder,
+                METRICS_EMIT_INTERVAL,
+            )
+            .start("telemetry-collector-metrics", outbox.clone()),
+            logs_collector_handle,
         ];
 
         let shipper_handle = shipper::start(
@@ -150,7 +116,7 @@ impl TelemetryPipeline {
             Arc::new(shipper::BurnCentralFleetShipperTransport::new(
                 auth_token, client,
             )),
-            Duration::from_secs(5),
+            SHIPPER_POLL_INTERVAL,
         );
 
         Ok(Self {

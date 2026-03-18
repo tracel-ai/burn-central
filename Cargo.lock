@@ -407,7 +407,7 @@ dependencies = [
  "burn-central-client",
  "burn-central-inference",
  "chrono",
- "crossbeam-queue",
+ "crossbeam",
  "directories",
  "metrics",
  "metrics-tracing-context",
