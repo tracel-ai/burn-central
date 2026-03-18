@@ -8,7 +8,6 @@ use burn_central_client::request::{
 
 use crossbeam::channel::{Receiver, Sender, after, bounded, never, tick};
 use crossbeam::select;
-use rand::RngExt;
 
 use crate::auth_client::AuthenticatedFleetClient;
 use crate::telemetry::event::TelemetryData;
@@ -358,7 +357,7 @@ fn calculate_backoff_delay(
     let exp = 2u32.saturating_pow(consecutive_failures as u32);
     let raw = min_delay.saturating_mul(exp);
     let capped = raw.min(max_delay);
-    let jitter = rand::rng().random_range(0.0..1.0);
+    let jitter = fastrand::f64() * 0.5 + 0.5;
     min_delay + capped.saturating_sub(min_delay).mul_f64(jitter)
 }
 
