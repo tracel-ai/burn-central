@@ -130,7 +130,10 @@ impl TelemetryPipeline {
         let collector_handles = vec![
             collector::start(
                 "telemetry-collector-metrics",
-                Arc::new(collector::MetricsEventCollector::new(recorder)),
+                Arc::new(collector::MetricsEventCollector::new(
+                    fleet_key.clone(),
+                    recorder,
+                )),
                 outbox.clone(),
                 Duration::from_secs(5),
             ),

@@ -184,7 +184,6 @@ pub fn load_cached_model_source(
     }
 
     tracing::info!(
-        root = %models_root.display(),
         version = model_version_id,
         "reading model source metadata for model version"
     );
@@ -193,10 +192,7 @@ pub fn load_cached_model_source(
     let manifest_path = model_root.join("manifest.json");
 
     if !manifest_path.exists() {
-        tracing::error!(
-            path = %manifest_path.display(),
-            "cached model manifest not found for active model version"
-        );
+        tracing::error!("cached model manifest not found for active model version");
         return Err(ModelCacheError::MissingCachedFile(
             manifest_path.display().to_string(),
         ));
