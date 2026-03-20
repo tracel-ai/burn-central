@@ -109,7 +109,7 @@ pub fn ensure_cached_model(
         if manifest_matches_download
             && cached_files_present_and_sized(&model_root, &manifest.files)?
         {
-            tracing::info!(
+            tracing::debug!(
                 version = %download.model_version_id,
                 "cached model manifest matches download response and files are complete, skipping cache update"
             );
@@ -179,11 +179,11 @@ pub fn load_cached_model_source(
     model_version_id: &str,
 ) -> Result<FsBundle, ModelCacheError> {
     if model_version_id.is_empty() {
-        tracing::error!("model version id is empty in fleet state");
+        tracing::debug!("model version id is empty in fleet state");
         return Err(ModelCacheError::MissingActiveModelVersion);
     }
 
-    tracing::info!(
+    tracing::debug!(
         version = model_version_id,
         "reading model source metadata for model version"
     );
@@ -192,7 +192,7 @@ pub fn load_cached_model_source(
     let manifest_path = model_root.join("manifest.json");
 
     if !manifest_path.exists() {
-        tracing::error!("cached model manifest not found for active model version");
+        tracing::debug!("cached model manifest not found for active model version");
         return Err(ModelCacheError::MissingCachedFile(
             manifest_path.display().to_string(),
         ));
