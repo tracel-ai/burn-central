@@ -230,7 +230,7 @@ impl ExperimentArtifactReader for BurnCentralArtifactReader {
         name: &str,
     ) -> Result<LoadedArtifact, ExperimentReaderError> {
         let id = RemoteExperimentId::from_experiment_id(&experiment_id)
-            .map_err(|_| ExperimentReaderError::new("Invalid experiment ID format"))?;
+            .ok_or_else(|| ExperimentReaderError::new("Invalid experiment ID format"))?;
 
         let experiment_path = ExperimentPath::new(
             self.exp_path.owner_name().to_string(),

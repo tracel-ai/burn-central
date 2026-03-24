@@ -36,8 +36,8 @@ impl ExperimentId {
         &self.0
     }
 
-    pub fn parse<T: FromStr>(&self) -> Result<T, ()> {
-        self.0.parse().map_err(|_| ())
+    pub fn parse<T: FromStr>(&self) -> Option<T> {
+        self.0.parse().ok()
     }
 }
 

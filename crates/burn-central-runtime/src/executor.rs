@@ -215,14 +215,14 @@ impl<B: AutodiffBackend> Executor<B> {
 
         let client = match (&self.credentials, &self.env) {
             (Some(creds), Some(env)) => Some(
-                burn_central_client::Client::new(env.clone(), &creds)
+                burn_central_client::Client::new(env.clone(), creds)
                     .map_err(|e| RuntimeError::ClientInitializationFailed(e.to_string()))?,
             ),
             _ => None,
         };
 
         let mut ctx = ExecutionContext {
-            client: client,
+            client,
             namespace: self.namespace.clone().unwrap_or_default(),
             project: self.project.clone().unwrap_or_default(),
             args_override,
@@ -254,9 +254,7 @@ impl<B: AutodiffBackend> Executor<B> {
 
             let experiment_num = experiment
                 .id()
-                .parse::<i32>()
-                .ok()
-                .expect("Burn Central experiment ids should end with an experiment number");
+                .parse::<i32>().expect("Burn Central experiment ids should end with an experiment number");
 
             println!(
                 "{}",

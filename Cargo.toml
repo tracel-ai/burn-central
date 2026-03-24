@@ -57,7 +57,7 @@ tracing-subscriber = "0.3.22"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
-burn-central-client = { version = "0.6.0" }
+burn-central-client = { version = "0.6.1" }
 # burn-central-client = "0.5.0"
 
 
@@ -71,7 +71,7 @@ burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.5.
 burn-central-experiment = { path = "crates/burn-central-experiment", version = "0.5.0" }
 
 ### For xtask crate ###
-tracel-xtask = "4.5.0"
+tracel-xtask = "4.13.7"
 
 [profile.dev]
 debug = 0 # Speed up compilation time and not necessary.

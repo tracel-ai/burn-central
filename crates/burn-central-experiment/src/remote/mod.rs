@@ -54,8 +54,8 @@ impl RemoteExperimentId {
         ExperimentId::from(format!("{}", self.0))
     }
 
-    pub fn from_experiment_id(id: &ExperimentId) -> Result<Self, ()> {
-        id.parse().map_err(|_| ()).map(RemoteExperimentId)
+    pub fn from_experiment_id(id: &ExperimentId) -> Option<Self> {
+        id.parse().map(RemoteExperimentId)
     }
 
     pub fn num(&self) -> i32 {
