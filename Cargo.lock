@@ -343,6 +343,7 @@ name = "burn-central"
 version = "0.5.0"
 dependencies = [
  "burn-central-core",
+ "burn-central-experiment",
  "burn-central-fleet",
  "burn-central-inference",
  "burn-central-macros",
@@ -381,6 +382,10 @@ dependencies = [
 [[package]]
 name = "burn-central-core"
 version = "0.5.0"
+
+[[package]]
+name = "burn-central-experiment"
+version = "0.5.0"
 dependencies = [
  "burn",
  "burn-central-artifact",
@@ -389,12 +394,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "strum",
  "thiserror 2.0.18",
  "tracing",
- "tracing-core",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]
@@ -450,7 +451,9 @@ dependencies = [
  "anyhow",
  "burn",
  "burn-central-artifact",
+ "burn-central-client",
  "burn-central-core",
+ "burn-central-experiment",
  "burn-central-fleet",
  "burn-central-inference",
  "clap",

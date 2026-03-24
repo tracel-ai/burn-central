@@ -4,16 +4,15 @@ use std::sync::Arc;
 use burn::train::logger::MetricLogger;
 use burn::train::metric::store::{EpochSummary, MetricsUpdate, NumericMetricUpdate, Split};
 use burn::train::metric::{MetricAttributes, MetricDefinition, MetricId, NumericEntry};
-use burn_central_client::websocket::MetricLog;
 
-use crate::experiment::{ExperimentRun, ExperimentRunHandle};
+use crate::{ExperimentHandle, ExperimentRun, MetricSpec, MetricValue};
 
 /// Remote implementation for burn `MetricLogger` trait.
 pub struct RemoteMetricLogger {
-    experiment_handle: ExperimentRunHandle,
+    experiment_handle: ExperimentHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,
     iteration_count: usize,
-    last_summaries: Option<Vec<MetricLog>>,
+    last_summaries: Option<Vec<MetricValue>>,
 }
 
 impl RemoteMetricLogger {
@@ -69,18 +68,19 @@ impl MetricLogger for RemoteMetricLogger {
             let value = get_value_from_entry(numeric_entry);
             let running_value = get_value_from_entry(running_entry);
 
-            logs.push(MetricLog {
+            logs.push(MetricValue {
                 name: definition.name.clone(),
                 value,
             });
 
-            summaries.push(MetricLog {
+            summaries.push(MetricValue {
                 name: definition.name.clone(),
                 value: running_value,
             });
         }
         self.experiment_handle
-            .log_metric(epoch, split.to_string(), self.iteration_count, logs);
+            .log_metric(epoch, split.to_string(), self.iteration_count, logs)
+            .expect("Failed to log metric, experiment may have been closed or inactive");
         self.last_summaries = Some(summaries);
     }
 
@@ -103,12 +103,12 @@ impl MetricLogger for RemoteMetricLogger {
             MetricAttributes::None => return,
         };
 
-        match self.experiment_handle.log_metric_definition(
-            definition.name,
-            definition.description,
+        match self.experiment_handle.log_metric_definition(MetricSpec {
+            name: definition.name,
+            description: definition.description,
             unit,
             higher_is_better,
-        ) {
+        }) {
             Ok(_) => (),
             Err(e) => panic!("{e}"),
         }

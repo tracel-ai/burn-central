@@ -1,4 +1,4 @@
-use burn_central_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
+use burn_central_artifact::bundle::FsBundle;
 use burn_central_artifact::download::{
     ArtifactDownloadFile, DownloadError, download_artifacts_to_sink,
 };
@@ -10,15 +10,9 @@ use burn_central_client::response::ArtifactResponse;
 use burn_central_client::{Client, ClientError};
 use std::collections::BTreeMap;
 
-use crate::schemas::ExperimentPath;
+use crate::ArtifactKind;
 
-#[derive(Debug, Clone, strum::Display, strum::EnumString)]
-#[strum(serialize_all = "snake_case")]
-pub enum ArtifactKind {
-    Model,
-    Log,
-    Other,
-}
+use super::ExperimentPath;
 
 /// A scope for artifact operations within a specific experiment.
 #[derive(Clone)]
@@ -28,25 +22,17 @@ pub struct ExperimentArtifactClient {
 }
 
 impl ExperimentArtifactClient {
-    pub(crate) fn new(client: Client, exp_path: ExperimentPath) -> Self {
+    pub fn new(client: Client, exp_path: ExperimentPath) -> Self {
         Self { client, exp_path }
     }
 
-    /// Upload an artifact using a file-backed bundle sink to avoid loading files into memory.
-    pub fn upload<E: BundleEncode>(
+    pub fn upload(
         &self,
         name: impl Into<String>,
         kind: ArtifactKind,
-        artifact: E,
-        settings: &E::Settings,
+        bundle: &FsBundle,
     ) -> Result<String, ArtifactError> {
         let name = name.into();
-        let mut bundle = FsBundle::temp()
-            .map_err(|e| ArtifactError::Internal(format!("Failed to create temp bundle: {e}")))?;
-
-        artifact.encode(&mut bundle, settings).map_err(|e| {
-            ArtifactError::Encoding(format!("Failed to encode artifact: {}", e.into()))
-        })?;
 
         let mut specs = Vec::with_capacity(bundle.files().len());
         for f in bundle.files() {
@@ -69,7 +55,7 @@ impl ExperimentArtifactClient {
             self.exp_path.experiment_num(),
             CreateArtifactRequest {
                 name: name.clone(),
-                kind: kind.to_string(),
+                kind: artifact_kind_name(kind).to_string(),
                 files: specs,
             },
         )?;
@@ -104,7 +90,7 @@ impl ExperimentArtifactClient {
                 parts,
             });
         }
-        upload_bundle_multipart(&bundle, &uploads)?;
+        upload_bundle_multipart(bundle, &uploads)?;
 
         self.client.complete_artifact_upload(
             self.exp_path.owner_name(),
@@ -117,24 +103,8 @@ impl ExperimentArtifactClient {
         Ok(res.id)
     }
 
-    /// Download an artifact and decode it using the BundleDecode trait (filesystem-backed).
-    pub fn download<D: BundleDecode>(
-        &self,
-        name: impl AsRef<str>,
-        settings: &D::Settings,
-    ) -> Result<D, ArtifactError> {
-        let reader = self.download_raw(name.as_ref())?;
-        D::decode(&reader, settings).map_err(|e| {
-            ArtifactError::Decoding(format!(
-                "Failed to decode artifact {}: {}",
-                name.as_ref(),
-                e.into()
-            ))
-        })
-    }
-
     /// Download an artifact as a filesystem-backed bundle.
-    pub fn download_raw(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
+    pub fn download(&self, name: impl AsRef<str>) -> Result<FsBundle, ArtifactError> {
         let name = name.as_ref();
         let artifact = self.fetch(name)?;
         let resp = self.client.presign_artifact_download(
@@ -179,16 +149,20 @@ impl ExperimentArtifactClient {
     }
 }
 
+fn artifact_kind_name(kind: ArtifactKind) -> &'static str {
+    match kind {
+        ArtifactKind::Model => "model",
+        ArtifactKind::Log => "log",
+        ArtifactKind::Other => "other",
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
     #[error("Artifact not found: {0}")]
     NotFound(String),
     #[error(transparent)]
     Client(#[from] ClientError),
-    #[error("Error while encoding artifact: {0}")]
-    Encoding(String),
-    #[error("Error while decoding artifact: {0}")]
-    Decoding(String),
     #[error(transparent)]
     Download(#[from] DownloadError),
     #[error(transparent)]

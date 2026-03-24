@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use burn_central_core::experiment::{ExperimentRun, ExperimentRunHandle};
+use burn_central_experiment::{ExperimentHandle, ExperimentRun};
 use tracing::Level;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::filter::filter_fn;
@@ -63,17 +63,17 @@ impl LogBuffer {
 }
 
 struct RemoteWriter {
-    sender: Arc<ExperimentRunHandle>,
+    sender: Arc<ExperimentHandle>,
     buffer: Arc<Mutex<LogBuffer>>,
 }
 
 struct RemoteWriterMaker {
-    experiment_handle: Arc<ExperimentRunHandle>,
+    experiment_handle: Arc<ExperimentHandle>,
     buffer: Arc<Mutex<LogBuffer>>,
 }
 
 impl RemoteWriterMaker {
-    fn new(experiment_handle: Arc<ExperimentRunHandle>, buffer: Arc<Mutex<LogBuffer>>) -> Self {
+    fn new(experiment_handle: Arc<ExperimentHandle>, buffer: Arc<Mutex<LogBuffer>>) -> Self {
         Self {
             experiment_handle,
             buffer,
@@ -97,7 +97,7 @@ impl std::io::Write for RemoteWriter {
 
         let mut log_buffer = self.buffer.lock().unwrap();
         for line in log_buffer.push_and_take_ready(&message) {
-            let _ = self.sender.try_log_info(line);
+            let _ = self.sender.log_info(line);
         }
 
         Ok(buf.len())
@@ -106,7 +106,7 @@ impl std::io::Write for RemoteWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         let mut log_buffer = self.buffer.lock().unwrap();
         if let Some(content) = log_buffer.flush_all() {
-            let _ = self.sender.try_log_info(content);
+            let _ = self.sender.log_info(content);
         }
         Ok(())
     }

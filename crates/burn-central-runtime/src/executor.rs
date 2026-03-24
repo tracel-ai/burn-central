@@ -7,15 +7,14 @@ use crate::output::{ExperimentOutput, TrainOutput};
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use crate::telemetry;
-use burn_central_core::BurnCentral;
-use burn_central_core::experiment::{CancelToken, ExperimentRun};
+use burn_central_experiment::{CancelToken, ExperimentRun};
 use std::collections::HashMap;
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
 
 /// The execution context for a routine, containing the necessary information to run it.
 pub struct ExecutionContext<B: Backend> {
-    client: Option<BurnCentral>,
+    client: Option<burn_central_client::Client>,
     namespace: String,
     project: String,
     args_override: Option<serde_json::Value>,
@@ -56,7 +55,7 @@ impl<B: Backend> ExecutionContext<B> {
         &self.devices
     }
 
-    pub fn client(&self) -> Option<&BurnCentral> {
+    pub fn client(&self) -> Option<&burn_central_client::Client> {
         self.client.as_ref()
     }
 
@@ -105,7 +104,8 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
     fn new() -> Self {
         Self {
             executor: Executor {
-                client: None,
+                credentials: None,
+                env: None,
                 namespace: None,
                 project: None,
                 handlers: HashMap::new(),
@@ -145,12 +145,14 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
 
     pub fn build(
         self,
-        client: BurnCentral,
+        credentials: impl Into<burn_central_client::BurnCentralCredentials>,
+        env: burn_central_client::Env,
         namespace: impl Into<String>,
         project: impl Into<String>,
     ) -> Executor<B> {
         let mut executor = self.executor;
-        executor.client = Some(client);
+        executor.credentials = Some(credentials.into());
+        executor.env = Some(env);
         executor.namespace = Some(namespace.into());
         executor.project = Some(project.into());
         // Possibly do some validation or final setup here
@@ -162,7 +164,8 @@ impl<B: AutodiffBackend> ExecutorBuilder<B> {
 #[doc(hidden)]
 /// An executor that manages the execution of routines for different targets.
 pub struct Executor<B: Backend> {
-    client: Option<BurnCentral>,
+    credentials: Option<burn_central_client::BurnCentralCredentials>,
+    env: Option<burn_central_client::Env>,
     namespace: Option<String>,
     project: Option<String>,
     handlers: HashMap<TargetId, ExecutorRoutine<B>>,
@@ -211,7 +214,7 @@ impl<B: AutodiffBackend> Executor<B> {
             })?;
 
         let mut ctx = ExecutionContext {
-            client: self.client.clone(),
+            client: None, // Will be initialized when starting the experiment
             namespace: self.namespace.clone().unwrap_or_default(),
             project: self.project.clone().unwrap_or_default(),
             args_override,
@@ -220,7 +223,7 @@ impl<B: AutodiffBackend> Executor<B> {
             cancel_token: CancelToken::new(),
         };
 
-        if let Some(client) = &mut ctx.client {
+        if let Some(client) = &ctx.client {
             let code_version = option_env!("BURN_CENTRAL_CODE_VERSION")
                 .unwrap_or("unknown")
                 .to_string();
@@ -232,26 +235,31 @@ impl<B: AutodiffBackend> Executor<B> {
                 ctx.namespace,
                 ctx.project
             );
-            let experiment = client.start_experiment(
+
+            let experiment = burn_central_experiment::ExperimentRun::remote(
+                client.clone(),
                 &ctx.namespace,
                 &ctx.project,
                 code_version,
                 routine.to_string(),
             )?;
 
-            let exp_id = experiment.id();
+            let experiment_num = experiment
+                .id()
+                .rsplit('/')
+                .next()
+                .and_then(|value| value.parse::<i32>().ok())
+                .expect("Burn Central experiment ids should end with an experiment number");
             println!(
                 "{}",
                 serde_json::to_string(&serde_json::json!({
                     "namespace": ctx.namespace(),
                     "project": ctx.project(),
-                    "experiment_num": exp_id.experiment_num(),
+                    "experiment_num": experiment_num,
                 }))
                 .unwrap()
             );
-            ctx.cancel_token = experiment
-                .cancel_token()
-                .expect("Experiment reference should be valid");
+            ctx.cancel_token = experiment.cancel_token();
             ctx.experiment = Some(experiment);
             if let Some(experiment) = ctx.experiment.as_ref() {
                 if let Err(err) = telemetry::install_for_experiment(experiment) {

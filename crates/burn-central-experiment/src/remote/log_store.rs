@@ -5,7 +5,7 @@ use burn_central_client::{
 };
 use sha2::Digest;
 
-use crate::schemas::ExperimentPath;
+use super::ExperimentPath;
 
 #[derive(Debug)]
 pub struct TempLogStore {

@@ -1,5 +1,5 @@
 use burn::prelude::Backend;
-use burn_central_core::Env;
+use burn_central_client::Env;
 use burn_central_fleet::{
     FleetDeviceSession, FleetManagedFactory, FleetManagedInference, FleetRegistrationToken,
 };

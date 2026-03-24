@@ -45,7 +45,8 @@
 //!
 //!
 
-pub use burn_central_core::*;
+#[doc(inline)]
+pub use burn_central_experiment as experiment;
 
 /// This crate provide the register macros. It allow user to mark there training functions so they
 /// can be found by Burn Central CLI.

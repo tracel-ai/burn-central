@@ -2,7 +2,7 @@ use crate::executor::ExecutionContext;
 use crate::params::default::Model;
 use burn::prelude::Backend;
 use burn_central_artifact::bundle::BundleEncode;
-use burn_central_core::artifacts::ArtifactKind;
+use burn_central_experiment::ArtifactKind;
 use std::fmt::Display;
 
 /// This trait defines how a specific return type (Output) from a handler apply its effects to the execution context.
@@ -40,7 +40,7 @@ where
 impl<B: Backend, M: BundleEncode + Send + 'static> RoutineOutput<ExecutionContext<B>> for Model<M> {
     fn apply_output(self, ctx: &mut ExecutionContext<B>) -> anyhow::Result<()> {
         if let Some(experiment) = ctx.experiment() {
-            experiment.log_artifact("model", ArtifactKind::Model, self.0, &Default::default())?;
+            experiment.save_artifact("model", ArtifactKind::Model, self.0, &Default::default())?;
         }
         Ok(())
     }

@@ -1,5 +1,5 @@
 use burn::prelude::Backend;
-use burn_central_core::experiment::CancelToken;
+use burn_central_experiment::CancelToken;
 
 use crate::{executor::ExecutionContext, params::RoutineParam};
 

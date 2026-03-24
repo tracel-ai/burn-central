@@ -1,11 +1,13 @@
-use crate::experiment::CancelToken;
-use crate::experiment::log_store::TempLogStore;
 use burn_central_client::{
     ClientError, WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use std::{thread::JoinHandle, time::Duration};
+
+use crate::CancelToken;
+
+use super::log_store::TempLogStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadError {
@@ -122,7 +124,6 @@ impl ExperimentThread {
     }
 }
 
-#[derive(Debug)]
 pub struct ExperimentSocket {
     handle: JoinHandle<Result<ThreadResult, ThreadError>>,
 }

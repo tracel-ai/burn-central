@@ -1,7 +1,8 @@
+use std::fmt;
 use std::path::PathBuf;
 
-use crate::artifacts::ArtifactKind;
-use crate::experiment::{ExperimentRun, ExperimentRunHandle};
+use crate::ArtifactKind;
+use crate::{ExperimentHandle, ExperimentRun};
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
@@ -89,10 +90,17 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 /// Remote implementation for burn `Recorder`, `FileRecorder` traits.
 pub struct RemoteCheckpointRecorder {
-    experiment_handle: ExperimentRunHandle,
+    experiment_handle: ExperimentHandle,
+}
+
+impl fmt::Debug for RemoteCheckpointRecorder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteCheckpointRecorder")
+            .finish_non_exhaustive()
+    }
 }
 
 impl RemoteCheckpointRecorder {
@@ -142,7 +150,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
             name: file_name.to_string(),
         };
         self.experiment_handle
-            .log_artifact(
+            .save_artifact(
                 file_name,
                 ArtifactKind::Other,
                 CheckpointRecordSources::new(record),
@@ -170,7 +178,11 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
         };
         let artifact = self
             .experiment_handle
-            .load_artifact::<CheckpointRecordSources<B, R>>(name, &settings)
+            .use_artifact::<CheckpointRecordSources<B, R>>(
+                self.experiment_handle.id().clone(),
+                name,
+                &settings,
+            )
             .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))?;
         Ok(artifact.record)
     }

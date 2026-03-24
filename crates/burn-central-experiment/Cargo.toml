@@ -1,0 +1,24 @@
+[package]
+name = "burn-central-experiment"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+burn-central-artifact.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+tracing.workspace = true
+burn.workspace = true
+
+# Remote experiment dependencies
+burn-central-client.workspace = true
+crossbeam.workspace = true
+sha2.workspace = true
