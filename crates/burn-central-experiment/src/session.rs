@@ -51,7 +51,6 @@ pub trait ExperimentSession: Send + Sync {
         kind: ArtifactKind,
         artifact: &FsBundle,
     ) -> Result<(), ExperimentError>;
-    fn cancel(&self) -> Result<(), ExperimentError>;
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError>;
 }
 
@@ -70,10 +69,6 @@ where
         artifact: &FsBundle,
     ) -> Result<(), ExperimentError> {
         self.as_ref().save_artifact(name, kind, artifact)
-    }
-
-    fn cancel(&self) -> Result<(), ExperimentError> {
-        self.as_ref().cancel()
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {

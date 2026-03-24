@@ -47,7 +47,6 @@ struct ActiveSession {
 pub struct BurnCentralSession {
     exp_path: ExperimentPath,
     http_client: Client,
-    cancel_token: CancelToken,
     active: Mutex<Option<ActiveSession>>,
 }
 
@@ -67,12 +66,11 @@ impl BurnCentralSession {
 
         let log_store = TempLogStore::new(burn_client.clone(), experiment_path.clone());
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(ws_client, log_store, receiver, cancel_token.clone());
+        let socket = ExperimentSocket::new(ws_client, log_store, receiver, cancel_token);
 
         Ok(Self {
             exp_path: experiment_path,
             http_client: burn_client,
-            cancel_token,
             active: Mutex::new(Some(ActiveSession { sender, socket })),
         })
     }
@@ -159,11 +157,6 @@ impl ExperimentSession for BurnCentralSession {
                     err,
                 )
             })
-    }
-
-    fn cancel(&self) -> Result<(), ExperimentError> {
-        self.cancel_token.cancel();
-        Ok(())
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {

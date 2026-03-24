@@ -108,28 +108,34 @@ impl ExperimentRun {
         Self { inner, handle }
     }
 
+    /// Get a handle to the experiment run that can be used to access experiment capabilities in a thread-safe way.
     pub fn handle(&self) -> ExperimentHandle {
         self.handle.clone()
     }
 
+    /// Get the unique identifier for this experiment run.
     pub fn id(&self) -> &ExperimentId {
         &self.inner.metadata.id
     }
 
+    /// Get a cancellation token that can be used to link child tasks to be cancelled when this experiment run is cancelled.
     pub fn cancel_token(&self) -> CancelToken {
         self.inner.cancel_token.clone()
     }
 
+    /// Cancel the experiment run, marking it as cancelled and preventing any further events or artifacts from being recorded.
     pub fn cancel(&self) -> Result<(), ExperimentError> {
         self.inner.ensure_active()?;
         self.inner.cancel_token.cancel();
-        self.inner.session.cancel()
+        Ok(())
     }
 
+    /// Mark the experiment run as finished with the given completion status. This will prevent any further events or artifacts from being recorded and will trigger any necessary cleanup in the backend.
     pub fn finish(self) -> Result<(), ExperimentError> {
         self.inner.finish_once(ExperimentCompletion::Success)
     }
 
+    /// Mark the experiment run as failed with the given reason. This will prevent any further events or artifacts from being recorded and will trigger any necessary cleanup in the backend.
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
@@ -378,7 +384,6 @@ mod tests {
         events: Mutex<Vec<Event>>,
         completions: Mutex<Vec<ExperimentCompletion>>,
         artifacts_saved: AtomicUsize,
-        cancels: AtomicUsize,
     }
 
     impl ExperimentSession for MockSession {
@@ -394,11 +399,6 @@ mod tests {
             _artifact: &FsBundle,
         ) -> Result<(), ExperimentError> {
             self.artifacts_saved.fetch_add(1, Ordering::AcqRel);
-            Ok(())
-        }
-
-        fn cancel(&self) -> Result<(), ExperimentError> {
-            self.cancels.fetch_add(1, Ordering::AcqRel);
             Ok(())
         }
 
@@ -478,7 +478,6 @@ mod tests {
             run.cancel().unwrap();
         }
 
-        assert_eq!(session.cancels.load(Ordering::Acquire), 1);
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
     }
