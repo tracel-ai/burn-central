@@ -1,4 +1,6 @@
+use std::fmt;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 
@@ -9,6 +11,7 @@ use serde::Serialize;
 mod cancellation;
 pub mod error;
 pub mod integration;
+mod local;
 mod reader;
 mod remote;
 mod session;
@@ -29,16 +32,47 @@ impl ExperimentId {
         Self(id)
     }
 
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     pub fn parse<T: FromStr>(&self) -> Result<T, ()> {
         self.0.parse().map_err(|_| ())
     }
 }
 
-impl<T> From<T> for ExperimentId
-where
-    T: ToString,
-{
-    fn from(value: T) -> Self {
+impl fmt::Display for ExperimentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for ExperimentId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for ExperimentId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<&String> for ExperimentId {
+    fn from(value: &String) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl From<i32> for ExperimentId {
+    fn from(value: i32) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<u32> for ExperimentId {
+    fn from(value: u32) -> Self {
         Self(value.to_string())
     }
 }
@@ -189,8 +223,8 @@ impl ExperimentRun {
 
 /// Provides methods for the local experiment run implementation without Burn Central.
 impl ExperimentRun {
-    pub fn local() -> Self {
-        todo!("Local experiment run is not yet implemented")
+    pub fn local(root: impl Into<PathBuf>) -> Result<Self, ExperimentError> {
+        local::create_experiment_run(root.into())
     }
 }
 
@@ -292,23 +326,19 @@ impl ExperimentHandle {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
 
-        let mut bundle = FsBundle::temp().map_err(|e| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Artifact,
-                "Failed to create temporary bundle for artifact",
-                e,
-            )
-        })?;
+        let artifact_fn = |bundle: &mut FsBundle| {
+            artifact.encode(bundle, settings).map_err(|e| {
+                ExperimentError::with_source(
+                    ExperimentErrorKind::Artifact,
+                    "Failed to encode artifact into bundle",
+                    e,
+                )
+            })
+        };
 
-        artifact.encode(&mut bundle, settings).map_err(|e| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Artifact,
-                "Failed to encode artifact into bundle",
-                e,
-            )
-        })?;
-
-        inner.session.save_artifact(name.as_ref(), kind, &bundle)
+        inner
+            .session
+            .save_artifact(name.as_ref(), kind, Box::new(artifact_fn))
     }
 
     pub fn use_artifact<D: BundleDecode>(
@@ -390,9 +420,13 @@ impl Drop for ExperimentRun {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::reader::{ExperimentReaderError, LoadedArtifact};
+    use crate::session::BundleFn;
+    use burn_central_artifact::bundle::{BundleSink, BundleSource};
 
     use super::*;
 
@@ -413,7 +447,7 @@ mod tests {
             &self,
             _name: &str,
             _kind: ArtifactKind,
-            _artifact: &FsBundle,
+            _artifact: Box<BundleFn>,
         ) -> Result<(), ExperimentError> {
             self.artifacts_saved.fetch_add(1, Ordering::AcqRel);
             Ok(())
@@ -513,5 +547,65 @@ mod tests {
             Event::Log { message } => assert_eq!(message, "still-logging"),
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct TestArtifact(String);
+
+    impl BundleEncode for TestArtifact {
+        type Settings = ();
+        type Error = String;
+
+        fn encode<O: BundleSink>(
+            self,
+            sink: &mut O,
+            _settings: &Self::Settings,
+        ) -> Result<(), Self::Error> {
+            sink.put_bytes("artifact.txt", self.0.as_bytes())
+        }
+    }
+
+    impl BundleDecode for TestArtifact {
+        type Settings = ();
+        type Error = String;
+
+        fn decode<I: BundleSource>(
+            source: &I,
+            _settings: &Self::Settings,
+        ) -> Result<Self, Self::Error> {
+            let mut reader = source.open("artifact.txt")?;
+            let mut content = String::new();
+            reader
+                .read_to_string(&mut content)
+                .map_err(|err| err.to_string())?;
+            Ok(Self(content))
+        }
+    }
+
+    #[test]
+    fn local_run_roundtrips_saved_artifacts() {
+        let run_root = std::env::temp_dir().join(format!(
+            "burn-central-experiment-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let run = ExperimentRun::local(run_root).unwrap();
+        let run_id = run.id().clone();
+
+        run.save_artifact(
+            "artifact",
+            ArtifactKind::Other,
+            TestArtifact("hello".into()),
+            &(),
+        )
+        .unwrap();
+
+        let loaded = run
+            .use_artifact::<TestArtifact>(run_id, "artifact", &())
+            .unwrap();
+
+        assert_eq!(loaded, TestArtifact("hello".into()));
     }
 }

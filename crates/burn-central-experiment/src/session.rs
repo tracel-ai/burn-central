@@ -42,6 +42,8 @@ pub enum ExperimentCompletion {
     Cancelled,
 }
 
+pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError> + 'a;
+
 /// Backend-specific implementation for the active experiment run.
 pub trait ExperimentSession: Send + Sync {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
@@ -49,7 +51,7 @@ pub trait ExperimentSession: Send + Sync {
         &self,
         name: &str,
         kind: ArtifactKind,
-        artifact: &FsBundle,
+        artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError>;
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError>;
 }
@@ -66,7 +68,7 @@ where
         &self,
         name: &str,
         kind: ArtifactKind,
-        artifact: &FsBundle,
+        artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
         self.as_ref().save_artifact(name, kind, artifact)
     }

@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
 use crate::remote::RemoteExperimentId;
-use crate::session::{Event, ExperimentCompletion, ExperimentSession};
+use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
 
 use burn_central_artifact::bundle::FsBundle;
 use burn_central_client::websocket::{
@@ -145,10 +145,20 @@ impl ExperimentSession for BurnCentralSession {
         &self,
         name: &str,
         kind: ArtifactKind,
-        artifact: &FsBundle,
+        artifact: Box<BundleFn>,
     ) -> Result<(), ExperimentError> {
+        let mut bundle = FsBundle::temp().map_err(|err| {
+            ExperimentError::with_source(
+                ExperimentErrorKind::Artifact,
+                "Failed to create temporary bundle for artifact upload",
+                err,
+            )
+        })?;
+
+        artifact(&mut bundle)?;
+
         ExperimentArtifactClient::new(self.http_client.clone(), self.exp_path.clone())
-            .upload(name, kind, artifact)
+            .upload(name, kind, &bundle)
             .map(|_| ())
             .map_err(|err| {
                 ExperimentError::with_source(
