@@ -1,8 +1,11 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::thread::{self, JoinHandle};
 
 use burn_central_artifact::bundle::FsBundle;
+use crossbeam::channel::{Sender, unbounded};
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::reader::{ArtifactRef, ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
@@ -45,32 +48,82 @@ pub fn create_experiment_run(root: PathBuf) -> Result<ExperimentRun, ExperimentE
 
 struct LocalExperimentSession {
     root: PathBuf,
+    active: Mutex<Option<LocalWorker>>,
 }
 
 impl LocalExperimentSession {
     fn new(root: PathBuf) -> Result<Self, std::io::Error> {
         fs::create_dir_all(root.join("artifacts"))?;
-        Ok(Self { root })
+        let (sender, receiver) = unbounded();
+        let events_path = root.join("events.log");
+        let status_path = root.join("status.txt");
+        let join = thread::spawn(move || local_worker(receiver, events_path, status_path));
+
+        Ok(Self {
+            root,
+            active: Mutex::new(Some(LocalWorker { sender, join })),
+        })
     }
 
-    fn events_path(&self) -> PathBuf {
-        self.root.join("events.log")
+    fn sender(&self) -> Result<Sender<LocalWrite>, ExperimentError> {
+        let guard = self.active.lock().unwrap();
+        guard
+            .as_ref()
+            .map(|worker| worker.sender.clone())
+            .ok_or_else(|| {
+                ExperimentError::new(
+                    ExperimentErrorKind::AlreadyFinished,
+                    "Local experiment session has already finished",
+                )
+            })
     }
 
-    fn status_path(&self) -> PathBuf {
-        self.root.join("status.txt")
+    fn finish_worker(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
+        let worker = self.active.lock().unwrap().take().ok_or_else(|| {
+            ExperimentError::new(
+                ExperimentErrorKind::AlreadyFinished,
+                "Local experiment session has already finished",
+            )
+        })?;
+
+        let send_result = worker
+            .sender
+            .send(LocalWrite::Finish(format!("{completion:?}")));
+        let join_result = worker.join.join();
+
+        match join_result {
+            Ok(Ok(())) => {
+                if send_result.is_err() {
+                    return Err(ExperimentError::new(
+                        ExperimentErrorKind::Internal,
+                        "Failed to send local experiment completion",
+                    ));
+                }
+                Ok(())
+            }
+            Ok(Err(err)) => Err(ExperimentError::with_source(
+                ExperimentErrorKind::Internal,
+                "Local experiment writer failed",
+                err,
+            )),
+            Err(_) => Err(ExperimentError::new(
+                ExperimentErrorKind::Internal,
+                "Local experiment writer thread panicked",
+            )),
+        }
     }
 }
 
 impl ExperimentSession for LocalExperimentSession {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-        append_line(self.events_path(), &format!("{event:?}")).map_err(|err| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Internal,
-                "Failed to append local experiment event",
-                err,
-            )
-        })
+        self.sender()?
+            .send(LocalWrite::Event(format!("{event:?}")))
+            .map_err(|_| {
+                ExperimentError::new(
+                    ExperimentErrorKind::Internal,
+                    "Failed to queue local experiment event",
+                )
+            })
     }
 
     fn save_artifact(
@@ -102,14 +155,18 @@ impl ExperimentSession for LocalExperimentSession {
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {
-        append_line(self.status_path(), &format!("{completion:?}")).map_err(|err| {
-            ExperimentError::with_source(
-                ExperimentErrorKind::Internal,
-                "Failed to write local experiment completion",
-                err,
-            )
-        })
+        self.finish_worker(completion)
     }
+}
+
+struct LocalWorker {
+    sender: Sender<LocalWrite>,
+    join: JoinHandle<Result<(), std::io::Error>>,
+}
+
+enum LocalWrite {
+    Event(String),
+    Finish(String),
 }
 
 struct LocalExperimentReader {
@@ -167,6 +224,24 @@ fn append_line(path: PathBuf, line: &str) -> Result<(), std::io::Error> {
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(line.as_bytes())?;
     file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn local_worker(
+    receiver: crossbeam::channel::Receiver<LocalWrite>,
+    events_path: PathBuf,
+    status_path: PathBuf,
+) -> Result<(), std::io::Error> {
+    while let Ok(message) = receiver.recv() {
+        match message {
+            LocalWrite::Event(line) => append_line(events_path.clone(), &line)?,
+            LocalWrite::Finish(line) => {
+                append_line(status_path, &line)?;
+                return Ok(());
+            }
+        }
+    }
+
     Ok(())
 }
 
