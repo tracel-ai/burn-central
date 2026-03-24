@@ -254,7 +254,8 @@ impl<B: AutodiffBackend> Executor<B> {
 
             let experiment_num = experiment
                 .id()
-                .parse::<i32>().expect("Burn Central experiment ids should end with an experiment number");
+                .parse::<i32>()
+                .expect("Burn Central experiment ids should end with an experiment number");
 
             println!(
                 "{}",
