@@ -1,6 +1,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExperimentErrorKind {
-    /// Caused by an attempt to operate on an experiment that has already been cancelled.
+    /// Caused by an operation that explicitly observes experiment cancellation.
     Cancelled,
     /// Caused by an attempt to operate on an experiment that has already been finished (either successfully or with failure).
     AlreadyFinished,

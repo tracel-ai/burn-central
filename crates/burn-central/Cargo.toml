@@ -12,9 +12,11 @@ version.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-burn-central-core.workspace = true
+# burn-central-core.workspace = true
 burn-central-macros.workspace = true
 burn-central-runtime.workspace = true
 burn-central-experiment.workspace = true
 burn-central-inference.workspace = true
 burn-central-fleet.workspace = true
+burn-central-artifact.workspace = true
+burn-central-client.workspace = true

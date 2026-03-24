@@ -342,7 +342,8 @@ dependencies = [
 name = "burn-central"
 version = "0.5.0"
 dependencies = [
- "burn-central-core",
+ "burn-central-artifact",
+ "burn-central-client",
  "burn-central-experiment",
  "burn-central-fleet",
  "burn-central-inference",

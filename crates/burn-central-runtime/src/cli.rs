@@ -12,8 +12,12 @@ pub struct BurnCentralArgs {
     pub project: String,
     #[arg(long)]
     pub api_key: String,
-    #[arg(long, default_value = "http://localhost:9001")]
-    pub endpoint: String,
+    #[arg(long, default_value = "Development", value_parser = serde_env_parser)]
+    pub env: burn_central_client::Env,
+}
+
+fn serde_env_parser(s: &str) -> Result<burn_central_client::Env, String> {
+    serde_json::from_str(&s).map_err(|e| format!("Failed to parse env: {e}"))
 }
 
 #[derive(Parser, Debug)]

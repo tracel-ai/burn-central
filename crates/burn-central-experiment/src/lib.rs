@@ -1,4 +1,5 @@
 use std::ops::Deref;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 
 use burn_central_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
@@ -20,7 +21,27 @@ use crate::reader::ExperimentArtifactReader;
 use crate::session::{Event, ExperimentSession};
 
 /// The unique identifier for an experiment run. It is used to associate events, artifacts, and other data with a specific experiment.
-pub type ExperimentId = String;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExperimentId(String);
+
+impl ExperimentId {
+    pub fn new(id: String) -> Self {
+        Self(id)
+    }
+
+    pub fn parse<T: FromStr>(&self) -> Result<T, ()> {
+        self.0.parse().map_err(|_| ())
+    }
+}
+
+impl<T> From<T> for ExperimentId
+where
+    T: ToString,
+{
+    fn from(value: T) -> Self {
+        Self(value.to_string())
+    }
+}
 
 /// The different types of artifacts that can be associated with an experiment run. It is used to categorize artifacts and provide context for their usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,7 +144,10 @@ impl ExperimentRun {
         self.inner.cancel_token.clone()
     }
 
-    /// Cancel the experiment run, marking it as cancelled and preventing any further events or artifacts from being recorded.
+    /// Signal that the experiment run has been cancelled.
+    ///
+    /// The run remains usable until it is explicitly finished, failed, or dropped. If it is later
+    /// dropped without an explicit completion, it will be marked as cancelled.
     pub fn cancel(&self) -> Result<(), ExperimentError> {
         self.inner.ensure_active()?;
         self.inner.cancel_token.cancel();
@@ -325,13 +349,6 @@ impl ExperimentHandle {
 
 impl RunInner {
     fn ensure_active(&self) -> Result<(), ExperimentError> {
-        if self.cancel_token.is_cancelled() {
-            return Err(ExperimentError::new(
-                ExperimentErrorKind::Cancelled,
-                "Experiment run has been cancelled",
-            ));
-        }
-
         let state = self.state.lock().unwrap();
         match *state {
             RunState::Active => Ok(()),
@@ -480,5 +497,21 @@ mod tests {
 
         let completions = session.completions.lock().unwrap();
         assert_eq!(completions.as_slice(), &[ExperimentCompletion::Cancelled]);
+    }
+
+    #[test]
+    fn cancel_does_not_prevent_logging_before_drop() {
+        let session = Arc::new(MockSession::default());
+        let run = create_run(session.clone());
+
+        run.cancel().unwrap();
+        run.log_info("still-logging").unwrap();
+
+        let events = session.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Log { message } => assert_eq!(message, "still-logging"),
+            event => panic!("unexpected event: {event:?}"),
+        }
     }
 }

@@ -45,6 +45,9 @@
 //!
 //!
 
+pub use burn_central_client::BurnCentralCredentials;
+pub use burn_central_client::Env;
+
 #[doc(inline)]
 pub use burn_central_experiment as experiment;
 
@@ -65,3 +68,6 @@ pub use burn_central_inference as inference;
 /// On-device fleet synchronization helpers.
 #[doc(inline)]
 pub use burn_central_fleet as fleet;
+
+#[doc(inline)]
+pub use burn_central_artifact as artifact;

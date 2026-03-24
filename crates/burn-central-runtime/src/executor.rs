@@ -213,8 +213,16 @@ impl<B: AutodiffBackend> Executor<B> {
                 RuntimeError::InvalidArgs(e.to_string())
             })?;
 
+        let client = match (&self.credentials, &self.env) {
+            (Some(creds), Some(env)) => Some(
+                burn_central_client::Client::new(env.clone(), &creds)
+                    .map_err(|e| RuntimeError::ClientInitializationFailed(e.to_string()))?,
+            ),
+            _ => None,
+        };
+
         let mut ctx = ExecutionContext {
-            client: None, // Will be initialized when starting the experiment
+            client: client,
             namespace: self.namespace.clone().unwrap_or_default(),
             project: self.project.clone().unwrap_or_default(),
             args_override,
@@ -246,10 +254,10 @@ impl<B: AutodiffBackend> Executor<B> {
 
             let experiment_num = experiment
                 .id()
-                .rsplit('/')
-                .next()
-                .and_then(|value| value.parse::<i32>().ok())
+                .parse::<i32>()
+                .ok()
                 .expect("Burn Central experiment ids should end with an experiment number");
+
             println!(
                 "{}",
                 serde_json::to_string(&serde_json::json!({
