@@ -70,10 +70,10 @@ pub fn training<B: AutodiffBackend>(
 To enable experiment tracking, you need to add three key components to your `LearnerBuilder`:
 
 ```rust
-use burn_central::integration::{
-    RemoteMetricLogger,
-    remote_interrupter,
-    RemoteCheckpointRecorder,
+use burn_central::experiment::integration::{
+    ExperimentCheckpointRecorder,
+    ExperimentMetricLogger,
+    experiment_interrupter,
 };
 use burn::train::{LearnerBuilder, metric::{AccuracyMetric, LossMetric}};
 
@@ -82,12 +82,12 @@ let learner = LearnerBuilder::new(artifact_dir)
     .metric_valid_numeric(AccuracyMetric::new())
     .metric_train_numeric(LossMetric::new())
     .metric_valid_numeric(LossMetric::new())
-    // Remote metric logging
-    .with_metric_logger(RemoteMetricLogger::new(client))
-    // Remote checkpoint saving
-    .with_file_checkpointer(RemoteCheckpointRecorder::new(client))
-    // Remote interruption handling
-    .with_interrupter(remote_interrupter(client))
+    // Experiment metric logging
+    .with_metric_logger(ExperimentMetricLogger::new(client))
+    // Experiment checkpoint saving
+    .with_file_checkpointer(ExperimentCheckpointRecorder::new(client))
+    // Experiment interruption handling
+    .with_interrupter(experiment_interrupter(client))
     .num_epochs(config.num_epochs)
     .summary()
     .build(

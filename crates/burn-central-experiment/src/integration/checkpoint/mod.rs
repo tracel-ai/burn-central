@@ -1,7 +1,8 @@
+use std::fmt;
 use std::path::PathBuf;
 
-use crate::artifacts::ArtifactKind;
-use crate::experiment::{ExperimentRun, ExperimentRunHandle};
+use crate::ArtifactKind;
+use crate::{ExperimentHandle, ExperimentRun};
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
@@ -89,13 +90,21 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-/// Remote implementation for burn `Recorder`, `FileRecorder` traits.
-pub struct RemoteCheckpointRecorder {
-    experiment_handle: ExperimentRunHandle,
+/// Experiment-backed implementation of Burn's [`Recorder`] and [`FileRecorder`] traits.
+#[derive(Clone)]
+pub struct ExperimentCheckpointRecorder {
+    experiment_handle: ExperimentHandle,
 }
 
-impl RemoteCheckpointRecorder {
+impl fmt::Debug for ExperimentCheckpointRecorder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExperimentCheckpointRecorder")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExperimentCheckpointRecorder {
+    /// Create a recorder backed by the provided experiment run.
     pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),
@@ -103,19 +112,21 @@ impl RemoteCheckpointRecorder {
     }
 }
 
-impl<B: Backend> FileRecorder<B> for RemoteCheckpointRecorder {
+impl<B: Backend> FileRecorder<B> for ExperimentCheckpointRecorder {
     fn file_extension() -> &'static str {
         "mpk"
     }
 }
 
-impl Default for RemoteCheckpointRecorder {
+impl Default for ExperimentCheckpointRecorder {
     fn default() -> Self {
-        unimplemented!("Default is not implemented for RemoteRecorder, as it requires a client.")
+        unimplemented!(
+            "Default is not implemented for ExperimentCheckpointRecorder, as it requires an experiment run."
+        )
     }
 }
 
-impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
+impl<B: Backend> Recorder<B> for ExperimentCheckpointRecorder {
     type Settings = FullPrecisionSettings;
     type RecordArgs = PathBuf;
     type RecordOutput = ();
@@ -142,7 +153,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
             name: file_name.to_string(),
         };
         self.experiment_handle
-            .log_artifact(
+            .save_artifact(
                 file_name,
                 ArtifactKind::Other,
                 CheckpointRecordSources::new(record),
@@ -170,7 +181,11 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
         };
         let artifact = self
             .experiment_handle
-            .load_artifact::<CheckpointRecordSources<B, R>>(name, &settings)
+            .use_artifact::<CheckpointRecordSources<B, R>>(
+                self.experiment_handle.id().clone(),
+                name,
+                &settings,
+            )
             .map_err(|e| RecorderError::Unknown(format!("Failed to load artifact: {e}")))?;
         Ok(artifact.record)
     }
@@ -181,7 +196,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
         _args: Self::RecordArgs,
     ) -> Result<Self::RecordOutput, RecorderError> {
         Err(RecorderError::Unknown(
-            "Saving items directly is not supported by RemoteCheckpointRecorder".to_string(),
+            "Saving items directly is not supported by ExperimentCheckpointRecorder".to_string(),
         ))
     }
 
@@ -190,7 +205,7 @@ impl<B: Backend> Recorder<B> for RemoteCheckpointRecorder {
         I: DeserializeOwned,
     {
         Err(RecorderError::Unknown(
-            "Loading items directly is not supported by RemoteCheckpointRecorder".to_string(),
+            "Loading items directly is not supported by ExperimentCheckpointRecorder".to_string(),
         ))
     }
 }

@@ -1,13 +1,13 @@
-use burn_central_core::{BurnCentralError, experiment::ExperimentTrackerError};
+use burn_central_experiment::error::ExperimentError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RuntimeError {
     #[error("Handler '{0}' not found")]
     HandlerNotFound(String),
-    #[error("Burn Central API call failed: {0}")]
-    BurnCentralError(#[from] BurnCentralError),
+    #[error("Client initialization failed: {0}")]
+    ClientInitializationFailed(String),
     #[error("Experiment API call failed: {0}")]
-    ExperimentApiFailed(#[from] ExperimentTrackerError),
+    ExperimentApiFailed(#[from] ExperimentError),
     #[error("Handler execution failed: {0}")]
     HandlerFailed(anyhow::Error),
     #[error("Ambiguous target '{0}'. Found multiple handlers: {1:?}")]

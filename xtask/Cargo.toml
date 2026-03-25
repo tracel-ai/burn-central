@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 log = { workspace = true }
 tracel-xtask = { workspace = true }
+strum = { workspace = true }

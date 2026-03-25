@@ -12,8 +12,12 @@ pub struct BurnCentralArgs {
     pub project: String,
     #[arg(long)]
     pub api_key: String,
-    #[arg(long, default_value = "http://localhost:9001")]
-    pub endpoint: String,
+    #[arg(long, default_value = "Development", value_parser = serde_env_parser)]
+    pub env: burn_central_client::Env,
+}
+
+fn serde_env_parser(s: &str) -> Result<burn_central_client::Env, String> {
+    serde_json::from_str(s).map_err(|e| format!("Failed to parse env: {e}"))
 }
 
 #[derive(Parser, Debug)]
@@ -52,6 +56,7 @@ mod test {
 
     #[test]
     fn test_parse_runtime_args() {
+        let env = serde_json::to_string(&burn_central_client::Env::Production).unwrap();
         let args = vec![
             "burn-central-runtime",
             "train",
@@ -62,6 +67,8 @@ mod test {
             "my_project",
             "--api-key",
             "my_api_key",
+            "--env",
+            &env,
         ];
         let runtime_args = RuntimeArgs::try_parse_from(args).unwrap();
         assert_eq!(runtime_args.kind, "train");

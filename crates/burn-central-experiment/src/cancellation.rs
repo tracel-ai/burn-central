@@ -17,6 +17,14 @@ pub struct CancelToken {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for CancelToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CancelToken")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     cancelled: AtomicBool,
@@ -76,7 +84,7 @@ impl CancelToken {
     }
 
     /// Create a new cancellable task/token of type T, link it to this token, and return it.
-    /// See [Self::link] for more details.
+    /// See [`Self::link`] for more details.
     pub fn into_linked<T: Cancellable + Default + Clone + 'static>(&self) -> T {
         let merged = T::default();
         self.link(merged.clone());
@@ -84,7 +92,7 @@ impl CancelToken {
     }
 
     /// Link an existing cancellable task/token of type T to this token and return it.
-    /// See [Self::link] for more details.
+    /// See [`Self::link`] for more details.
     pub fn linked<T: Cancellable + Clone + 'static>(&self, child: T) -> T {
         self.link(child.clone());
         child
@@ -102,7 +110,7 @@ impl Cancellable for CancelToken {
 
 impl<T: Cancellable> Cancellable for Arc<T> {
     fn cancel(&self) {
-        self.as_ref().cancel()
+        self.as_ref().cancel();
     }
     fn is_cancelled(&self) -> bool {
         self.as_ref().is_cancelled()

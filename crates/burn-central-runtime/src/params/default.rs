@@ -1,6 +1,6 @@
 use crate::{executor::ExecutionContext, params::RoutineParam};
 use burn::prelude::Backend;
-use burn_central_core::experiment::ExperimentRun;
+use burn_central_experiment::ExperimentRun;
 use derive_more::{Deref, From};
 
 /// Wrapper around multiple devices.
