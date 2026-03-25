@@ -1,3 +1,12 @@
+//! Backend-agnostic experiment tracking primitives.
+//!
+//! [`ExperimentRun`] is the active run abstraction used by both the Burn Central backend and the
+//! local backend. Use [`ExperimentRun::remote`] to create a run backed by Burn Central, or
+//! [`ExperimentRun::local`] to create numbered local runs under a user-provided root directory.
+//!
+//! The run dereferences to an [`ExperimentHandle`] for logging events and saving artifacts. Burn
+//! learner integrations built on top of this API are available in [`integration`].
+
 use std::fmt;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -23,19 +32,25 @@ use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::reader::ExperimentArtifactReader;
 use crate::session::{Event, ExperimentSession};
 
-/// The unique identifier for an experiment run. It is used to associate events, artifacts, and other data with a specific experiment.
+/// Opaque identifier for an experiment run.
+///
+/// The identifier format is backend-specific. It is stable for the backend that created it, but it
+/// should not be interpreted across different backends.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExperimentId(String);
 
 impl ExperimentId {
-    pub fn new(id: String) -> Self {
-        Self(id)
+    /// Create an experiment identifier from a backend-specific string value.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
     }
 
+    /// Borrow the backend-specific identifier value.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    /// Try to parse the identifier value into another type.
     pub fn parse<T: FromStr>(&self) -> Option<T> {
         self.0.parse().ok()
     }
@@ -77,27 +92,36 @@ impl From<u32> for ExperimentId {
     }
 }
 
-/// The different types of artifacts that can be associated with an experiment run. It is used to categorize artifacts and provide context for their usage.
+/// Artifact category associated with an experiment run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
+    /// Model weights, parameters, or checkpoints.
     Model,
+    /// Log files or related textual outputs.
     Log,
+    /// Any artifact that does not fit a more specific category.
     Other,
 }
 
-/// The data needed for a metric that can be logged during an experiment run.
+/// Metric definition metadata logged during a run.
 #[derive(Debug, Clone)]
 pub struct MetricSpec {
+    /// Display name for the metric.
     pub name: String,
+    /// Optional human-readable description.
     pub description: Option<String>,
+    /// Optional unit associated with the metric value.
     pub unit: Option<String>,
+    /// Whether higher values are considered better.
     pub higher_is_better: bool,
 }
 
-/// The value of a metric at a specific point during an experiment run.
+/// Numeric metric value logged during a run.
 #[derive(Debug, Clone)]
 pub struct MetricValue {
+    /// Metric name.
     pub name: String,
+    /// Metric value.
     pub value: f64,
 }
 
@@ -106,15 +130,16 @@ struct ExperimentMetadata {
     pub id: ExperimentId,
 }
 
-/// The main struct representing an active experiment run. It provides methods for logging events, saving artifacts, and managing the lifecycle of the experiment.
-/// When dropped, it will automatically mark the experiment as finished, ensuring that resources are cleaned up properly.
+/// Active experiment run.
+///
+/// This type owns the run lifecycle. It dereferences to [`ExperimentHandle`] for logging events
+/// and saving artifacts. If dropped without an explicit completion, it is finalized automatically.
 pub struct ExperimentRun {
     inner: Arc<RunInner>,
     handle: ExperimentHandle,
 }
 
-/// The handle for an experiment run, which can be cloned and used to interact with the experiment from different parts of the code.
-/// It provides methods for logging events and saving artifacts, and it ensures that the underlying experiment run is still active before performing any operations.
+/// Cloneable handle for interacting with an active experiment run.
 #[derive(Clone)]
 pub struct ExperimentHandle {
     metadata: ExperimentMetadata,
@@ -136,6 +161,7 @@ enum RunState {
 }
 
 impl ExperimentRun {
+    /// Create an experiment run from backend-provided session and reader implementations.
     pub fn new<S, R>(
         id: impl Into<ExperimentId>,
         session: S,
@@ -163,17 +189,17 @@ impl ExperimentRun {
         Self { inner, handle }
     }
 
-    /// Get a handle to the experiment run that can be used to access experiment capabilities in a thread-safe way.
+    /// Clone a handle that can be shared across tasks and threads.
     pub fn handle(&self) -> ExperimentHandle {
         self.handle.clone()
     }
 
-    /// Get the unique identifier for this experiment run.
+    /// Borrow the identifier for this run.
     pub fn id(&self) -> &ExperimentId {
         &self.inner.metadata.id
     }
 
-    /// Get a cancellation token that can be used to link child tasks to be cancelled when this experiment run is cancelled.
+    /// Get a token that can be linked to child tasks.
     pub fn cancel_token(&self) -> CancelToken {
         self.inner.cancel_token.clone()
     }
@@ -188,20 +214,23 @@ impl ExperimentRun {
         Ok(())
     }
 
-    /// Mark the experiment run as finished with the given completion status. This will prevent any further events or artifacts from being recorded and will trigger any necessary cleanup in the backend.
+    /// Mark the run as successful and finalize the backend session.
+    ///
+    /// If the run is dropped without calling [`Self::finish`] or [`Self::fail`], it is finalized
+    /// as successful by default.
     pub fn finish(self) -> Result<(), ExperimentError> {
         self.inner.finish_once(ExperimentCompletion::Success)
     }
 
-    /// Mark the experiment run as failed with the given reason. This will prevent any further events or artifacts from being recorded and will trigger any necessary cleanup in the backend.
+    /// Mark the run as failed and finalize the backend session.
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
     }
 }
 
-/// Provides methods for the remote experiment run implementation using Burn Central.
 impl ExperimentRun {
+    /// Create a run backed by Burn Central.
     pub fn remote(
         client: Client,
         namespace: &str,
@@ -221,8 +250,10 @@ impl ExperimentRun {
     }
 }
 
-/// Provides methods for the local experiment run implementation without Burn Central.
 impl ExperimentRun {
+    /// Create a local run under the provided root directory.
+    ///
+    /// Each call creates a numbered run directory inside `root`.
     pub fn local(root: impl Into<PathBuf>) -> Result<Self, ExperimentError> {
         local::create_experiment_run(root.into())
     }
@@ -237,6 +268,7 @@ impl Deref for ExperimentRun {
 }
 
 impl ExperimentHandle {
+    /// Borrow the identifier for the underlying run.
     pub fn id(&self) -> &ExperimentId {
         &self.metadata.id
     }
@@ -247,6 +279,7 @@ impl ExperimentHandle {
         inner.session.record_event(event)
     }
 
+    /// Log the serialized input arguments for the run.
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|e| {
             ExperimentError::with_source(
@@ -259,6 +292,7 @@ impl ExperimentHandle {
         self.record_event(Event::Args(value))
     }
 
+    /// Log a named configuration object for the run.
     pub fn log_config<C: Serialize>(
         &self,
         name: impl Into<String>,
@@ -278,12 +312,14 @@ impl ExperimentHandle {
         })
     }
 
+    /// Log an informational message for the run.
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
         self.record_event(Event::Log {
             message: message.into(),
         })
     }
 
+    /// Log metric values for an epoch, split, and iteration.
     pub fn log_metric(
         &self,
         epoch: usize,
@@ -299,10 +335,12 @@ impl ExperimentHandle {
         })
     }
 
+    /// Log a metric definition so later metric values have metadata attached.
     pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
         self.record_event(Event::MetricDefinition(spec))
     }
 
+    /// Log aggregated metric values for an epoch and split.
     pub fn log_epoch_summary(
         &self,
         epoch: usize,
@@ -316,6 +354,7 @@ impl ExperimentHandle {
         })
     }
 
+    /// Encode and persist an artifact in the configured backend.
     pub fn save_artifact<E: BundleEncode>(
         &self,
         name: impl AsRef<str>,
@@ -341,6 +380,7 @@ impl ExperimentHandle {
             .save_artifact(name.as_ref(), kind, Box::new(artifact_fn))
     }
 
+    /// Load and decode an artifact from a compatible experiment identifier.
     pub fn use_artifact<D: BundleDecode>(
         &self,
         experiment_id: impl Into<ExperimentId>,
@@ -405,7 +445,7 @@ impl RunInner {
     }
 }
 
-/// The experiment run is marked as finished when the `ExperimentRun` struct is dropped. If the run was not explicitly finished or cancelled, it will be marked as successful by default.
+/// Finalize the run on drop if it has not already been completed.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
         let completion = if self.inner.cancel_token.is_cancelled() {

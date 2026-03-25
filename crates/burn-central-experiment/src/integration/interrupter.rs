@@ -14,8 +14,10 @@ impl Cancellable for LinkedInterrupter {
     }
 }
 
-/// Helper for creating an `Interrupter` that is linked to the experiment's cancellation token.
-/// When the experiment is cancelled, the `Interrupter` will be triggered, allowing any training loop that checks the `Interrupter` to stop gracefully.
+/// Create an [`Interrupter`] linked to an experiment run's cancellation token.
+///
+/// When the run is cancelled, the returned interrupter will request a graceful stop from any
+/// training loop that checks it.
 pub fn remote_interrupter(experiment: &ExperimentRun) -> Interrupter {
     let cancel_token = experiment.cancel_token();
     let interrupter = Interrupter::new();

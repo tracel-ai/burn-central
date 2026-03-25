@@ -7,7 +7,7 @@ use burn::train::metric::{MetricAttributes, MetricDefinition, MetricId, NumericE
 
 use crate::{ExperimentHandle, ExperimentRun, MetricSpec, MetricValue};
 
-/// Remote implementation for burn `MetricLogger` trait.
+/// Experiment-backed implementation of Burn's `MetricLogger` trait.
 pub struct RemoteMetricLogger {
     experiment_handle: ExperimentHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,
@@ -16,6 +16,7 @@ pub struct RemoteMetricLogger {
 }
 
 impl RemoteMetricLogger {
+    /// Create a metric logger backed by the provided experiment run.
     pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),

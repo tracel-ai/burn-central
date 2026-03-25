@@ -1,5 +1,6 @@
 [package]
 name = "burn-central-experiment"
+description = "Backend-agnostic experiment tracking for Burn Central and local runs"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

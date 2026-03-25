@@ -151,7 +151,13 @@ impl ExperimentSession for LocalExperimentSession {
             )
         })?;
 
-        artifact(&mut bundle)
+        let res = artifact(&mut bundle);
+
+        if res.is_err() {
+            _ = bundle.delete();
+        }
+
+        res
     }
 
     fn finish(&self, completion: ExperimentCompletion) -> Result<(), ExperimentError> {

@@ -90,8 +90,8 @@ where
     }
 }
 
+/// Experiment-backed implementation of Burn's `Recorder` and `FileRecorder` traits.
 #[derive(Clone)]
-/// Remote implementation for burn `Recorder`, `FileRecorder` traits.
 pub struct RemoteCheckpointRecorder {
     experiment_handle: ExperimentHandle,
 }
@@ -104,6 +104,7 @@ impl fmt::Debug for RemoteCheckpointRecorder {
 }
 
 impl RemoteCheckpointRecorder {
+    /// Create a recorder backed by the provided experiment run.
     pub fn new(experiment: &ExperimentRun) -> Self {
         Self {
             experiment_handle: experiment.handle(),
@@ -119,7 +120,9 @@ impl<B: Backend> FileRecorder<B> for RemoteCheckpointRecorder {
 
 impl Default for RemoteCheckpointRecorder {
     fn default() -> Self {
-        unimplemented!("Default is not implemented for RemoteRecorder, as it requires a client.")
+        unimplemented!(
+            "Default is not implemented for RemoteCheckpointRecorder, as it requires an experiment run."
+        )
     }
 }
 
