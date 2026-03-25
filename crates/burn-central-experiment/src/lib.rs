@@ -5,7 +5,9 @@
 //! [`ExperimentRun::local`] to create numbered local runs under a user-provided root directory.
 //!
 //! The run dereferences to an [`ExperimentHandle`] for logging events and saving artifacts. Burn
-//! learner integrations built on top of this API are available in [`integration`].
+//! `train` integrations built on top of this API are available in
+//! [`crate::integration::training`], while tracing log forwarding lives in
+//! [`crate::integration::tracing`].
 
 use std::fmt;
 use std::ops::Deref;
@@ -18,17 +20,23 @@ use burn_central_client::Client;
 use serde::Serialize;
 
 mod cancellation;
-pub mod error;
-pub mod integration;
+mod context;
 mod local;
 mod reader;
 mod remote;
 mod session;
 
+pub mod error;
+pub mod integration;
+
 pub use cancellation::{CancelToken, Cancellable};
+pub use context::{
+    CurrentExperimentGuard, ExperimentInstrument, WithCurrentExperiment, current_experiment,
+};
 pub use session::ExperimentCompletion;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
+use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
 use crate::session::{Event, ExperimentSession};
 
@@ -137,6 +145,7 @@ struct ExperimentMetadata {
 pub struct ExperimentRun {
     inner: Arc<RunInner>,
     handle: ExperimentHandle,
+    _tracing_registration: TracingRegistration,
 }
 
 /// Cloneable handle for interacting with an active experiment run.
@@ -185,8 +194,13 @@ impl ExperimentRun {
             metadata,
             inner: Arc::downgrade(&inner),
         };
+        let tracing_registration = TracingRegistry::global().register_handle(handle.clone());
 
-        Self { inner, handle }
+        Self {
+            inner,
+            handle,
+            _tracing_registration: tracing_registration,
+        }
     }
 
     /// Clone a handle that can be shared across tasks and threads.
@@ -226,6 +240,12 @@ impl ExperimentRun {
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
+    }
+}
+
+impl From<&ExperimentRun> for ExperimentHandle {
+    fn from(value: &ExperimentRun) -> Self {
+        value.handle()
     }
 }
 
