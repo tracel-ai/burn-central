@@ -18,7 +18,7 @@ impl Cancellable for LinkedInterrupter {
 ///
 /// When the run is cancelled, the returned interrupter will request a graceful stop from any
 /// training loop that checks it.
-pub fn remote_interrupter(experiment: &ExperimentRun) -> Interrupter {
+pub fn experiment_interrupter(experiment: &ExperimentRun) -> Interrupter {
     let cancel_token = experiment.cancel_token();
     let interrupter = Interrupter::new();
     cancel_token.link(LinkedInterrupter(interrupter.clone()));
