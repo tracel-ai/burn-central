@@ -1,17 +1,35 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// A trait representing a cancellable task or operation. Implementors should ensure that `cancel` is idempotent and thread-safe, and that `is_cancelled` accurately reflects the cancellation state.
+/// A task or object that can participate in experiment cancellation propagation.
+///
+/// Implementations should make [`Self::cancel`] idempotent and thread-safe.
 pub trait Cancellable: Send + Sync {
-    /// Cancel the task. Should be idempotent and thread-safe.
+    /// Request cancellation.
     fn cancel(&self);
-    /// Check if the task has been cancelled. Should be thread-safe.
+
+    /// Return `true` once cancellation has been observed.
     fn is_cancelled(&self) -> bool;
 }
 
 type CancellableRef = Arc<dyn Cancellable>;
 
-/// A cancellation token that can be shared across tasks. When cancelled, it will cancel all linked child tasks/tokens. Thread-safe and can be cloned.
+/// Shareable cancellation token used by experiment runs and their children.
+///
+/// Cancelling a token also cancels every child that has been linked to it.
+///
+/// # Example
+///
+/// ```no_run
+/// use burn_central_experiment::CancelToken;
+///
+/// let parent = CancelToken::new();
+/// let child = parent.linked(CancelToken::new());
+///
+/// assert!(!child.is_cancelled());
+/// parent.cancel();
+/// assert!(child.is_cancelled());
+/// ```
 #[derive(Clone, Default)]
 pub struct CancelToken {
     inner: Arc<Inner>,
@@ -32,7 +50,7 @@ struct Inner {
 }
 
 impl CancelToken {
-    /// Create a new cancellation token that is not cancelled and has no children.
+    /// Create a new uncancelled token with no linked children.
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -42,13 +60,14 @@ impl CancelToken {
         }
     }
 
-    /// Check if this token has been cancelled. Thread-safe.
+    /// Return `true` once this token has been cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.inner.cancelled.load(Ordering::Acquire)
     }
 
-    /// Attach a child task/token to be cancelled when this token is cancelled.
-    /// If already cancelled, child is cancelled immediately.
+    /// Link a child so it is cancelled when this token is cancelled.
+    ///
+    /// If this token is already cancelled, the child is cancelled immediately.
     pub fn link<T: Cancellable + 'static>(&self, child: T) {
         let child = Arc::new(child);
         if self.is_cancelled() {
@@ -83,16 +102,14 @@ impl CancelToken {
         }
     }
 
-    /// Create a new cancellable task/token of type T, link it to this token, and return it.
-    /// See [`Self::link`] for more details.
+    /// Create a default child, link it to this token, and return it.
     pub fn into_linked<T: Cancellable + Default + Clone + 'static>(&self) -> T {
         let merged = T::default();
         self.link(merged.clone());
         merged
     }
 
-    /// Link an existing cancellable task/token of type T to this token and return it.
-    /// See [`Self::link`] for more details.
+    /// Link an existing child to this token and return it unchanged.
     pub fn linked<T: Cancellable + Clone + 'static>(&self, child: T) -> T {
         self.link(child.clone());
         child

@@ -35,10 +35,16 @@ pub enum Event {
     },
 }
 
+/// Final completion state recorded for an experiment run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExperimentCompletion {
+    /// The run completed successfully.
     Success,
+
+    /// The run failed with the provided reason.
     Failed(String),
+
+    /// The run was cancelled before completion.
     Cancelled,
 }
 

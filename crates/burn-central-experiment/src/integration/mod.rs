@@ -1,29 +1,9 @@
-//! Burn learner integrations backed by [`crate::ExperimentRun`].
+//! Optional adapters built on top of the core experiment primitives.
 //!
-//! These integrations plug an experiment run into Burn's learner APIs for metrics, checkpoints,
-//! and cancellation.
+//! Use [`training`] for Burn `train` integration points such as metric logging, checkpoint
+//! recording, and cancellation-aware learner interruption.
 //!
-//! ```ignore
-//! use burn::train::LearnerBuilder;
-//! use burn_central::experiment::ExperimentRun;
-//! use burn_central::experiment::integration::{
-//!     ExperimentCheckpointRecorder,
-//!     ExperimentMetricLogger,
-//!     experiment_interrupter,
-//! };
-//!
-//! let experiment: ExperimentRun = /* create a remote or local run */;
-//!
-//! LearnerBuilder::new("a_directory_of_your_choice")
-//!     .with_metric_logger(ExperimentMetricLogger::new(&experiment))
-//!     .with_file_checkpointer(ExperimentCheckpointRecorder::new(&experiment))
-//!     .with_interrupter(experiment_interrupter(&experiment));
-//! ```
+//! Use [`tracing`] to route `tracing` events into the current experiment.
 
-mod checkpoint;
-mod interrupter;
-mod metric;
-
-pub use checkpoint::ExperimentCheckpointRecorder;
-pub use interrupter::experiment_interrupter;
-pub use metric::ExperimentMetricLogger;
+pub mod tracing;
+pub mod training;

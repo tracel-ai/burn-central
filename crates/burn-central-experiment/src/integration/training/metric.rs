@@ -5,11 +5,14 @@ use burn::train::logger::MetricLogger;
 use burn::train::metric::store::{EpochSummary, MetricsUpdate, NumericMetricUpdate, Split};
 use burn::train::metric::{MetricAttributes, MetricDefinition, MetricId, NumericEntry};
 
-use crate::{ExperimentHandle, ExperimentRun, MetricSpec, MetricValue};
+use crate::{ExperimentRunHandle, MetricSpec, MetricValue};
 
 /// Experiment-backed implementation of Burn's [`MetricLogger`] trait.
+///
+/// Prefer [`crate::integration::training::ExperimentTrainingExt::metric_logger`] when you already
+/// have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 pub struct ExperimentMetricLogger {
-    experiment_handle: ExperimentHandle,
+    experiment_handle: ExperimentRunHandle,
     metric_definitions: HashMap<MetricId, MetricDefinition>,
     iteration_count: usize,
     last_summaries: Option<Vec<MetricValue>>,
@@ -17,9 +20,9 @@ pub struct ExperimentMetricLogger {
 
 impl ExperimentMetricLogger {
     /// Create a metric logger backed by the provided experiment run.
-    pub fn new(experiment: &ExperimentRun) -> Self {
+    pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
         Self {
-            experiment_handle: experiment.handle(),
+            experiment_handle: experiment.into(),
             metric_definitions: HashMap::default(),
             iteration_count: 0,
             last_summaries: None,

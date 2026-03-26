@@ -6,8 +6,8 @@ use crate::error::RuntimeError;
 use crate::output::{ExperimentOutput, TrainOutput};
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
-use crate::telemetry;
-use burn_central_experiment::{CancelToken, ExperimentRun};
+use burn_central_experiment::integration::tracing::try_init_tracing_subscriber;
+use burn_central_experiment::{CancelToken, ExperimentRun, ExperimentRunHandleExt};
 use std::collections::HashMap;
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;
@@ -268,14 +268,17 @@ impl<B: AutodiffBackend> Executor<B> {
             );
             ctx.cancel_token = experiment.cancel_token();
             ctx.experiment = Some(experiment);
-            if let Some(experiment) = ctx.experiment.as_ref() {
-                if let Err(err) = telemetry::install_for_experiment(experiment) {
-                    log::warn!("Telemetry disabled: {err}");
-                }
-            }
+            let _ = try_init_tracing_subscriber();
         }
 
-        let result = handler.run((), &mut ctx);
+        let result = match ctx
+            .experiment
+            .as_ref()
+            .map(|experiment| experiment.handle())
+        {
+            Some(handle) => handle.in_scope(|| handler.run((), &mut ctx)),
+            None => handler.run((), &mut ctx),
+        };
 
         match result {
             Ok(_) => {

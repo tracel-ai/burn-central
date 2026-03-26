@@ -1,14 +1,48 @@
 //! Backend-agnostic experiment tracking primitives.
 //!
-//! [`ExperimentRun`] is the active run abstraction used by both the Burn Central backend and the
-//! local backend. Use [`ExperimentRun::remote`] to create a run backed by Burn Central, or
-//! [`ExperimentRun::local`] to create numbered local runs under a user-provided root directory.
+//! This crate revolves around two core types:
+//! - [`ExperimentRun`], which owns the lifecycle of an active experiment.
+//! - [`ExperimentRunHandle`], which is a lightweight cloneable view for logging and artifact access
+//!   from background tasks or other threads.
 //!
-//! The run dereferences to an [`ExperimentHandle`] for logging events and saving artifacts. Burn
-//! learner integrations built on top of this API are available in [`integration`].
+//! Most code starts a run with [`ExperimentRun::local`] for local development and tests, or with
+//! [`ExperimentRun::remote`] when writing directly to Burn Central.
+//!
+//! Optional capabilities are exposed through extension traits:
+//! - [`ExperimentRunHandleExt`] for cloning a shareable handle.
+//! - [`ExperimentGlobalExt`] for ambient thread-local experiment context.
+//! - [`integration::training::ExperimentTrainingExt`] for Burn `train` adapters.
+//! - [`integration::tracing::ExperimentTracingExt`] for tracing span helpers.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use burn_central_experiment::{ExperimentRun, ExperimentRunHandleExt};
+//! use serde::Serialize;
+//!
+//! #[derive(Serialize)]
+//! struct TrainingConfig {
+//!     learning_rate: f64,
+//! }
+//!
+//! # fn main() -> Result<(), burn_central_experiment::error::ExperimentError> {
+//! let run = ExperimentRun::local("./runs")?;
+//! run.log_config(
+//!     "training",
+//!     &TrainingConfig {
+//!         learning_rate: 1e-3,
+//!     },
+//! )?;
+//!
+//! let handle = run.handle();
+//! handle.log_info("background worker ready")?;
+//!
+//! run.finish()?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::fmt;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
@@ -18,24 +52,31 @@ use burn_central_client::Client;
 use serde::Serialize;
 
 mod cancellation;
-pub mod error;
-pub mod integration;
+mod context;
 mod local;
 mod reader;
 mod remote;
 mod session;
 
+pub mod error;
+pub mod integration;
+
 pub use cancellation::{CancelToken, Cancellable};
+pub use context::{
+    CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
+};
 pub use session::ExperimentCompletion;
 
 use crate::error::{ExperimentError, ExperimentErrorKind};
+use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
 use crate::session::{Event, ExperimentSession};
 
 /// Opaque identifier for an experiment run.
 ///
-/// The identifier format is backend-specific. It is stable for the backend that created it, but it
-/// should not be interpreted across different backends.
+/// The identifier format is backend-specific.
+///
+/// It is stable for the backend that created it, but it should not be interpreted across different backends.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExperimentId(String);
 
@@ -130,24 +171,39 @@ struct ExperimentMetadata {
     pub id: ExperimentId,
 }
 
-/// Active experiment run.
+/// An active experiment run.
 ///
-/// This type owns the run lifecycle. It dereferences to [`ExperimentHandle`] for logging events
-/// and saving artifacts. If dropped without an explicit completion, it is finalized automatically.
+/// `ExperimentRun` owns finalization. As long as the run remains active, it can log structured
+/// events, persist artifacts, and expose a cancellation token to child work.
+///
+/// Use [`ExperimentRunHandleExt::handle`] when you need to share logging and artifact access without
+/// transferring lifecycle ownership. If the run is dropped without an explicit completion, it is
+/// finalized automatically.
+///
+/// Use [`ExperimentGlobalExt`] when you want to make the run available as the ambient
+/// thread-local experiment for tracing or other integrations.
 pub struct ExperimentRun {
     inner: Arc<RunInner>,
-    handle: ExperimentHandle,
+    handle: ExperimentRunHandle,
+    _tracing_registration: TracingRegistration,
 }
 
 /// Cloneable handle for interacting with an active experiment run.
+///
+/// A handle keeps the run identifier plus logging and artifact access, but it does not own the run
+/// lifecycle. This makes it the right type to move into async tasks, worker threads, or adapter
+/// objects.
+///
+/// If the originating [`ExperimentRun`] is finished or dropped, existing handles become inactive
+/// and will reject further operations.
 #[derive(Clone)]
-pub struct ExperimentHandle {
+pub struct ExperimentRunHandle {
     metadata: ExperimentMetadata,
     inner: Weak<RunInner>,
+    cancel_token: CancelToken,
 }
 
 struct RunInner {
-    metadata: ExperimentMetadata,
     cancel_token: CancelToken,
     state: Mutex<RunState>,
     session: Box<dyn ExperimentSession>,
@@ -161,7 +217,10 @@ enum RunState {
 }
 
 impl ExperimentRun {
-    /// Create an experiment run from backend-provided session and reader implementations.
+    /// Create a run from backend-specific session and artifact reader implementations.
+    ///
+    /// This is the low-level constructor used by the built-in local and remote backends. Most
+    /// callers should prefer [`Self::local`] or [`Self::remote`].
     pub fn new<S, R>(
         id: impl Into<ExperimentId>,
         session: S,
@@ -174,32 +233,30 @@ impl ExperimentRun {
     {
         let metadata = ExperimentMetadata { id: id.into() };
         let inner = Arc::new(RunInner {
-            metadata: metadata.clone(),
             cancel_token: cancel_token.clone(),
             state: Mutex::new(RunState::Active),
             session: Box::new(session),
             reader: Box::new(reader),
         });
 
-        let handle = ExperimentHandle {
+        let handle = ExperimentRunHandle {
             metadata,
             inner: Arc::downgrade(&inner),
+            cancel_token,
         };
+        let tracing_registration = TracingRegistry::global().register_handle(handle.clone());
 
-        Self { inner, handle }
+        Self {
+            inner,
+            handle,
+            _tracing_registration: tracing_registration,
+        }
     }
 
-    /// Clone a handle that can be shared across tasks and threads.
-    pub fn handle(&self) -> ExperimentHandle {
-        self.handle.clone()
-    }
-
-    /// Borrow the identifier for this run.
-    pub fn id(&self) -> &ExperimentId {
-        &self.inner.metadata.id
-    }
-
-    /// Get a token that can be linked to child tasks.
+    /// Return a cancellation token that can be linked to child work.
+    ///
+    /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
+    /// tasks and adapters.
     pub fn cancel_token(&self) -> CancelToken {
         self.inner.cancel_token.clone()
     }
@@ -217,20 +274,31 @@ impl ExperimentRun {
     /// Mark the run as successful and finalize the backend session.
     ///
     /// If the run is dropped without calling [`Self::finish`] or [`Self::fail`], it is finalized
-    /// as successful by default.
+    /// as successful by default. Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn finish(self) -> Result<(), ExperimentError> {
         self.inner.finish_once(ExperimentCompletion::Success)
     }
 
     /// Mark the run as failed and finalize the backend session.
+    ///
+    /// Any cloned [`ExperimentRunHandle`] becomes inactive afterwards.
     pub fn fail(self, reason: impl Into<String>) -> Result<(), ExperimentError> {
         self.inner
             .finish_once(ExperimentCompletion::Failed(reason.into()))
     }
 }
 
+impl From<&ExperimentRun> for ExperimentRunHandle {
+    fn from(value: &ExperimentRun) -> Self {
+        value.handle()
+    }
+}
+
 impl ExperimentRun {
     /// Create a run backed by Burn Central.
+    ///
+    /// Use this when you want to log directly to the remote service without going through the
+    /// higher-level runtime executor.
     pub fn remote(
         client: Client,
         namespace: &str,
@@ -251,35 +319,144 @@ impl ExperimentRun {
 }
 
 impl ExperimentRun {
-    /// Create a local run under the provided root directory.
+    /// Create a local run rooted under the provided directory.
     ///
-    /// Each call creates a numbered run directory inside `root`.
+    /// Each call creates the next numbered run directory inside `root`, which makes this backend a
+    /// convenient choice for tests, local development, and examples.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use burn_central_experiment::ExperimentRun;
+    ///
+    /// # fn main() -> Result<(), burn_central_experiment::error::ExperimentError> {
+    /// let run = ExperimentRun::local("./runs")?;
+    /// run.log_info("starting local experiment")?;
+    /// run.finish()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn local(root: impl Into<PathBuf>) -> Result<Self, ExperimentError> {
         local::create_experiment_run(root.into())
     }
 }
 
-impl Deref for ExperimentRun {
-    type Target = ExperimentHandle;
+impl ExperimentRun {
+    /// Borrow the identifier for the underlying run.
+    pub fn id(&self) -> &ExperimentId {
+        self.handle.id()
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.handle
+    /// Log the serialized input arguments for the run.
+    pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
+        self.handle.log_args(args)
+    }
+
+    /// Log a named configuration object for the run.
+    pub fn log_config<C: Serialize>(
+        &self,
+        name: impl Into<String>,
+        config: &C,
+    ) -> Result<(), ExperimentError> {
+        self.handle.log_config(name, config)
+    }
+
+    /// Log an informational message for the run.
+    pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
+        self.handle.log_info(message)
+    }
+
+    /// Log metric values for an epoch, split, and iteration.
+    pub fn log_metric(
+        &self,
+        epoch: usize,
+        split: impl Into<String>,
+        iteration: usize,
+        items: Vec<MetricValue>,
+    ) -> Result<(), ExperimentError> {
+        self.handle.log_metric(epoch, split, iteration, items)
+    }
+
+    /// Log a metric definition so later metric values have metadata attached.
+    pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
+        self.handle.log_metric_definition(spec)
+    }
+
+    /// Log aggregated metric values for an epoch and split.
+    pub fn log_epoch_summary(
+        &self,
+        epoch: usize,
+        split: impl Into<String>,
+        items: Vec<MetricValue>,
+    ) -> Result<(), ExperimentError> {
+        self.handle.log_epoch_summary(epoch, split, items)
+    }
+
+    /// Encode and persist an artifact in the configured backend.
+    pub fn save_artifact<E: BundleEncode>(
+        &self,
+        name: impl AsRef<str>,
+        kind: ArtifactKind,
+        artifact: E,
+        settings: &E::Settings,
+    ) -> Result<(), ExperimentError> {
+        self.handle.save_artifact(name, kind, artifact, settings)
+    }
+
+    /// Load and decode an artifact from a compatible experiment identifier.
+    pub fn use_artifact<D: BundleDecode>(
+        &self,
+        experiment_id: impl Into<ExperimentId>,
+        name: impl AsRef<str>,
+        settings: &D::Settings,
+    ) -> Result<D, ExperimentError> {
+        self.handle.use_artifact(experiment_id, name, settings)
     }
 }
 
-impl ExperimentHandle {
-    /// Borrow the identifier for the underlying run.
+/// Extension trait for cloning shareable handles from an [`ExperimentRun`].
+///
+/// Import this trait when you want a lightweight [`ExperimentRunHandle`] for async tasks, worker
+/// threads, or adapter objects that should not own run finalization.
+///
+/// # Example
+///
+/// ```no_run
+/// use burn_central_experiment::{ExperimentRun, ExperimentRunHandleExt};
+///
+/// let run = ExperimentRun::local("./runs").unwrap();
+/// let handle = run.handle();
+///
+/// std::thread::spawn(move || {
+///     let _ = handle.log_info("worker started");
+/// });
+/// ```
+pub trait ExperimentRunHandleExt {
+    /// Clone a handle that can be shared across tasks and threads.
+    fn handle(&self) -> ExperimentRunHandle;
+}
+
+impl ExperimentRunHandleExt for ExperimentRun {
+    fn handle(&self) -> ExperimentRunHandle {
+        self.handle.clone()
+    }
+}
+
+impl ExperimentRunHandle {
+    /// Borrow the identifier of the run this handle points to.
     pub fn id(&self) -> &ExperimentId {
         &self.metadata.id
     }
 
-    fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.ensure_active()?;
-        inner.session.record_event(event)
+    /// Return a cancellation token that can be linked to child work.
+    ///
+    /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
+    /// tasks and adapters.
+    pub fn cancel_token(&self) -> CancelToken {
+        self.cancel_token.clone()
     }
 
-    /// Log the serialized input arguments for the run.
+    /// See [`ExperimentRun::log_args`].
     pub fn log_args<A: Serialize>(&self, args: &A) -> Result<(), ExperimentError> {
         let value = serde_json::to_value(args).map_err(|e| {
             ExperimentError::with_source(
@@ -292,7 +469,7 @@ impl ExperimentHandle {
         self.record_event(Event::Args(value))
     }
 
-    /// Log a named configuration object for the run.
+    /// See [`ExperimentRun::log_config`].
     pub fn log_config<C: Serialize>(
         &self,
         name: impl Into<String>,
@@ -312,14 +489,14 @@ impl ExperimentHandle {
         })
     }
 
-    /// Log an informational message for the run.
+    /// See [`ExperimentRun::log_info`].
     pub fn log_info(&self, message: impl Into<String>) -> Result<(), ExperimentError> {
         self.record_event(Event::Log {
             message: message.into(),
         })
     }
 
-    /// Log metric values for an epoch, split, and iteration.
+    /// See [`ExperimentRun::log_metric`].
     pub fn log_metric(
         &self,
         epoch: usize,
@@ -335,12 +512,12 @@ impl ExperimentHandle {
         })
     }
 
-    /// Log a metric definition so later metric values have metadata attached.
+    /// See [`ExperimentRun::log_metric_definition`].
     pub fn log_metric_definition(&self, spec: MetricSpec) -> Result<(), ExperimentError> {
         self.record_event(Event::MetricDefinition(spec))
     }
 
-    /// Log aggregated metric values for an epoch and split.
+    /// See [`ExperimentRun::log_epoch_summary`].
     pub fn log_epoch_summary(
         &self,
         epoch: usize,
@@ -354,7 +531,7 @@ impl ExperimentHandle {
         })
     }
 
-    /// Encode and persist an artifact in the configured backend.
+    /// See [`ExperimentRun::save_artifact`].
     pub fn save_artifact<E: BundleEncode>(
         &self,
         name: impl AsRef<str>,
@@ -380,7 +557,7 @@ impl ExperimentHandle {
             .save_artifact(name.as_ref(), kind, Box::new(artifact_fn))
     }
 
-    /// Load and decode an artifact from a compatible experiment identifier.
+    /// See [`ExperimentRun::use_artifact`].
     pub fn use_artifact<D: BundleDecode>(
         &self,
         experiment_id: impl Into<ExperimentId>,
@@ -407,6 +584,14 @@ impl ExperimentHandle {
                 e,
             )
         })
+    }
+}
+
+impl ExperimentRunHandle {
+    fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
+        let inner = self.upgrade()?;
+        inner.ensure_active()?;
+        inner.session.record_event(event)
     }
 
     fn upgrade(&self) -> Result<Arc<RunInner>, ExperimentError> {
@@ -522,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    fn run_derefs_to_handle_for_event_recording() {
+    fn run_forwards_handle_methods_for_event_recording() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 

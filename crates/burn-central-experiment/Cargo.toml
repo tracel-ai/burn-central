@@ -17,9 +17,13 @@ burn-central-artifact.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 burn.workspace = true
 
 # Remote experiment dependencies
 burn-central-client.workspace = true
 crossbeam.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

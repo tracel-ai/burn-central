@@ -20,7 +20,6 @@ mod input;
 mod output;
 mod params;
 mod routine;
-mod telemetry;
 mod type_name;
 
 pub mod inference;

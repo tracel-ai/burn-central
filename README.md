@@ -46,17 +46,17 @@ use burn::prelude::*;
 
 #[register(training, name = "mnist")]
 pub fn training<B: AutodiffBackend>(
-    client: &ExperimentRun,
+    experiment: &ExperimentRun,
     config: Args<YourExperimentConfig>,
     MultiDevice(devices): MultiDevice<B>,
     loader: ArtifactLoader<ModelArtifact<B>>,
 ) -> Result<Model<ModelArtifact<B::InnerBackend>>, String> {
     // Log your configuration
-    client.log_config("Training Config", &training_config)
+    experiment.log_config("Training Config", &training_config)
         .expect("Logging config failed");
 
     // Your training logic here...
-    let model = train::<B>(client, artifact_dir, &training_config, devices[0].clone())?;
+    let model = train::<B>(experiment, artifact_dir, &training_config, devices[0].clone())?;
 
     Ok(Model(ModelArtifact {
         model_record: model.into_record(),
@@ -67,15 +67,19 @@ pub fn training<B: AutodiffBackend>(
 
 ### 2. Integrate with your Learner
 
-To enable experiment tracking, you need to add three key components to your `LearnerBuilder`:
+To enable experiment tracking, add the training integrations to your `LearnerBuilder` and install
+the tracing subscriber:
 
 ```rust
-use burn_central::experiment::integration::{
+use burn_central::experiment::integration::training::{
     ExperimentCheckpointRecorder,
     ExperimentMetricLogger,
     experiment_interrupter,
 };
+use burn_central::experiment::integration::tracing::try_init_tracing_subscriber;
 use burn::train::{LearnerBuilder, metric::{AccuracyMetric, LossMetric}};
+
+let _ = try_init_tracing_subscriber();
 
 let learner = LearnerBuilder::new(artifact_dir)
     .metric_train_numeric(AccuracyMetric::new())
@@ -83,11 +87,11 @@ let learner = LearnerBuilder::new(artifact_dir)
     .metric_train_numeric(LossMetric::new())
     .metric_valid_numeric(LossMetric::new())
     // Experiment metric logging
-    .with_metric_logger(ExperimentMetricLogger::new(client))
+    .with_metric_logger(ExperimentMetricLogger::new(experiment))
     // Experiment checkpoint saving
-    .with_file_checkpointer(ExperimentCheckpointRecorder::new(client))
+    .with_file_checkpointer(ExperimentCheckpointRecorder::new(experiment))
     // Experiment interruption handling
-    .with_interrupter(experiment_interrupter(client))
+    .with_interrupter(experiment_interrupter(experiment))
     .num_epochs(config.num_epochs)
     .summary()
     .build(
