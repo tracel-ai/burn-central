@@ -7,7 +7,7 @@ use crate::output::{ExperimentOutput, TrainOutput};
 use crate::params::args::{LaunchArgs, deserialize_and_merge_with_default};
 use crate::routine::{BoxedRoutine, ExecutorRoutineWrapper, IntoRoutine, Routine};
 use burn_central_experiment::integration::tracing::try_init_tracing_subscriber;
-use burn_central_experiment::{CancelToken, ExperimentRun};
+use burn_central_experiment::{CancelToken, ExperimentRun, ExperimentRunHandleExt};
 use std::collections::HashMap;
 
 type ExecutorRoutine<B> = BoxedRoutine<ExecutionContext<B>, (), ()>;

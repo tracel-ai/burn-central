@@ -1,38 +1,71 @@
+//! Ambient experiment context propagation.
+//!
+//! This module provides two related pieces:
+//! - [`ExperimentGlobalExt`] for entering a thread-local ambient experiment scope.
+//! - [`ExperimentInstrument`] for re-entering that scope whenever a future is polled.
+
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::{ExperimentHandle, ExperimentId, ExperimentRun};
+use crate::{ExperimentId, ExperimentRun, ExperimentRunHandle};
 
 thread_local! {
-    static CURRENT_EXPERIMENTS: RefCell<Vec<ExperimentHandle>> = const { RefCell::new(Vec::new()) };
+    static CURRENT_EXPERIMENTS: RefCell<Vec<ExperimentRunHandle>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Guard returned when entering an ambient experiment scope.
 ///
-/// The previous ambient experiment is restored when the guard is dropped.
+/// Ambient scopes are thread-local and stack-based. When the guard is dropped, the previous
+/// ambient experiment on that thread is restored.
+///
+/// This is returned by [`ExperimentRunHandle::enter`] and [`ExperimentGlobalExt::enter`].
+#[derive(Debug)]
+#[must_use = "ambient experiment guards must be kept alive to maintain the experiment scope"]
 pub struct CurrentExperimentGuard {
     experiment_id: ExperimentId,
 }
 
 /// Future wrapper that re-enters the ambient experiment scope on every poll.
+///
+/// Instances are created through [`ExperimentInstrument`].
 pub struct WithCurrentExperiment<F> {
     future: F,
-    handle: ExperimentHandle,
+    handle: ExperimentRunHandle,
 }
 
 /// Extension trait for propagating an experiment context with a future.
+///
+/// Use this when a future may be polled on a different thread or after the current ambient scope
+/// has ended.
+///
+/// # Example
+///
+/// ```no_run
+/// use burn_central_experiment::{ExperimentInstrument, ExperimentRun, ExperimentRunHandleExt};
+///
+/// let run = ExperimentRun::local("./runs").unwrap();
+///
+/// let _future = async move {
+///     tracing::info!("this future will poll inside the experiment context");
+/// }
+/// .in_experiment(&run);
+/// ```
 pub trait ExperimentInstrument: Future + Sized {
-    /// Poll this future inside the provided ambient experiment context.
+    /// Instrument this future to automatically enter the given experiment context.
     fn in_experiment<H>(self, experiment: H) -> WithCurrentExperiment<Self>
     where
-        H: Into<ExperimentHandle>,
+        H: Into<ExperimentRunHandle>,
     {
         WithCurrentExperiment::new(self, experiment.into())
     }
 
-    /// Poll this future inside the current ambient experiment context, if one exists.
+    /// Instrument this future to automatically enter the current ambient experiment context, if one exists.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no ambient experiment to propagate.
     fn in_current_experiment(self) -> WithCurrentExperiment<Self> {
         let handle = current_experiment().expect("no ambient experiment to propagate");
         WithCurrentExperiment::new(self, handle)
@@ -42,41 +75,66 @@ pub trait ExperimentInstrument: Future + Sized {
 impl<F: Future> ExperimentInstrument for F {}
 
 impl<F> WithCurrentExperiment<F> {
-    fn new(future: F, handle: ExperimentHandle) -> Self {
+    fn new(future: F, handle: ExperimentRunHandle) -> Self {
         Self { future, handle }
     }
 }
 
-impl ExperimentHandle {
-    /// Enter an ambient experiment scope for the duration of the returned guard.
+/// Extension trait providing methods for entering and propagating an ambient experiment context.
+///
+/// Ambient context is thread-local and stack-based. Nested scopes temporarily override the current
+/// experiment and restore the previous one when their guard is dropped.
+///
+/// This trait is implemented for [`ExperimentRun`]. [`ExperimentRunHandle`] provides matching
+/// [`ExperimentRunHandle::enter`] and [`ExperimentRunHandle::in_scope`] methods when you only have
+/// a cloned handle.
+///
+/// # Example
+///
+/// ```no_run
+/// use burn_central_experiment::{ExperimentGlobalExt, ExperimentRun};
+///
+/// let run = ExperimentRun::local("./runs").unwrap();
+///
+/// run.in_scope(|| {
+///     let current = ExperimentRun::current().unwrap();
+///     assert_eq!(current.id(), run.id());
+/// });
+/// ```
+pub trait ExperimentGlobalExt {
+    /// Enter an ambient scope for this run until the returned guard is dropped.
+    fn enter(&self) -> CurrentExperimentGuard;
+
+    /// Run a closure with this run installed as the ambient experiment.
+    fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T;
+
+    /// Return the current ambient experiment handle for this thread, if any.
+    fn current() -> Option<ExperimentRunHandle>;
+}
+
+impl ExperimentRunHandle {
+    /// See [`ExperimentGlobalExt::enter`].
     pub fn enter(&self) -> CurrentExperimentGuard {
         enter_experiment_handle(self.clone())
     }
 
-    /// Run a closure inside this handle's ambient experiment context.
+    /// See [`ExperimentGlobalExt::in_scope`].
     pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
         with_experiment_handle(self.clone(), f)
     }
-
-    /// Return a callable that enters this handle's ambient experiment context when invoked.
-    pub fn bind_current<T, F>(&self, f: F) -> impl FnOnce() -> T + use<T, F>
-    where
-        F: FnOnce() -> T,
-    {
-        let handle = self.clone();
-        move || with_experiment_handle(handle, f)
-    }
 }
 
-impl ExperimentRun {
-    /// Enter an ambient experiment scope for the duration of the returned guard.
-    pub fn enter(&self) -> CurrentExperimentGuard {
-        self.handle().enter()
+impl ExperimentGlobalExt for ExperimentRun {
+    fn enter(&self) -> CurrentExperimentGuard {
+        enter_experiment_handle(self.handle.clone())
     }
 
-    /// Run a closure inside this run's ambient experiment context.
-    pub fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
-        self.handle().in_scope(f)
+    fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
+        with_experiment_handle(self.handle.clone(), f)
+    }
+
+    fn current() -> Option<ExperimentRunHandle> {
+        current_experiment()
     }
 }
 
@@ -93,12 +151,12 @@ impl<F: Future> Future for WithCurrentExperiment<F> {
     }
 }
 
-/// Return the current ambient experiment handle, if one is in scope.
-pub fn current_experiment() -> Option<ExperimentHandle> {
+/// Return the current ambient experiment handle, if one is in scope on this thread.
+fn current_experiment() -> Option<ExperimentRunHandle> {
     CURRENT_EXPERIMENTS.with(|experiments| experiments.borrow().last().cloned())
 }
 
-pub(crate) fn enter_experiment_handle(handle: ExperimentHandle) -> CurrentExperimentGuard {
+fn enter_experiment_handle(handle: ExperimentRunHandle) -> CurrentExperimentGuard {
     CURRENT_EXPERIMENTS.with(|experiments| {
         experiments.borrow_mut().push(handle.clone());
     });
@@ -108,7 +166,7 @@ pub(crate) fn enter_experiment_handle(handle: ExperimentHandle) -> CurrentExperi
     }
 }
 
-pub(crate) fn with_experiment_handle<T>(handle: ExperimentHandle, f: impl FnOnce() -> T) -> T {
+fn with_experiment_handle<T>(handle: ExperimentRunHandle, f: impl FnOnce() -> T) -> T {
     let _guard = enter_experiment_handle(handle);
     f()
 }
@@ -130,12 +188,13 @@ impl Drop for CurrentExperimentGuard {
 mod tests {
     use std::sync::Arc;
 
+    use crate::context::ExperimentGlobalExt as _;
     use crate::error::ExperimentError;
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
     use crate::session::{BundleFn, ExperimentCompletion, ExperimentSession};
-    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun};
+    use crate::{ArtifactKind, CancelToken, ExperimentId, ExperimentRun, ExperimentRunHandleExt};
 
-    use super::{ExperimentInstrument, current_experiment};
+    use super::ExperimentInstrument;
 
     #[derive(Default)]
     struct MockSession;
@@ -186,23 +245,23 @@ mod tests {
         let run_a = create_run("ambient-test-a");
         let run_b = create_run("ambient-test-b");
 
-        assert!(current_experiment().is_none());
+        assert!(ExperimentRun::current().is_none());
         {
             let _outer = run_a.enter();
-            let current = current_experiment().expect("current experiment should be set");
+            let current = ExperimentRun::current().expect("current experiment should be set");
             assert_eq!(current.id(), run_a.id());
 
             {
                 let _inner = run_b.enter();
                 let current =
-                    current_experiment().expect("inner experiment should override outer scope");
+                    ExperimentRun::current().expect("inner experiment should override outer scope");
                 assert_eq!(current.id(), run_b.id());
             }
 
-            let current = current_experiment().expect("outer experiment should be restored");
+            let current = ExperimentRun::current().expect("outer experiment should be restored");
             assert_eq!(current.id(), run_a.id());
         }
-        assert!(current_experiment().is_none());
+        assert!(ExperimentRun::current().is_none());
     }
 
     #[test]
@@ -210,14 +269,16 @@ mod tests {
         let run = create_run("ambient-test-thread");
         let handle = run.handle();
 
-        std::thread::spawn(handle.bind_current(move || {
-            let current = current_experiment().expect("current experiment should be set");
-            assert_eq!(current.id().as_str(), "ambient-test-thread");
-        }))
+        std::thread::spawn(move || {
+            handle.in_scope(|| {
+                let current = ExperimentRun::current().expect("current experiment should be set");
+                assert_eq!(current.id().as_str(), "ambient-test-thread");
+            })
+        })
         .join()
         .expect("thread should complete successfully");
 
-        assert!(current_experiment().is_none());
+        assert!(ExperimentRun::current().is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -227,28 +288,30 @@ mod tests {
 
         let task_a = tokio::spawn(
             async {
-                let current = current_experiment().expect("current experiment should be set");
+                let current = ExperimentRun::current().expect("current experiment should be set");
                 assert_eq!(current.id().as_str(), "ambient-test-tokio-a");
 
                 tokio::task::yield_now().await;
 
-                let current = current_experiment().expect("current experiment should still be set");
+                let current =
+                    ExperimentRun::current().expect("current experiment should still be set");
                 assert_eq!(current.id().as_str(), "ambient-test-tokio-a");
             }
-            .in_experiment(run_a.handle()),
+            .in_experiment(&run_a),
         );
 
         let task_b = tokio::spawn(
             async {
-                let current = current_experiment().expect("current experiment should be set");
+                let current = ExperimentRun::current().expect("current experiment should be set");
                 assert_eq!(current.id().as_str(), "ambient-test-tokio-b");
 
                 tokio::task::yield_now().await;
 
-                let current = current_experiment().expect("current experiment should still be set");
+                let current =
+                    ExperimentRun::current().expect("current experiment should still be set");
                 assert_eq!(current.id().as_str(), "ambient-test-tokio-b");
             }
-            .in_experiment(run_b.handle()),
+            .in_experiment(&run_b),
         );
 
         task_a
@@ -257,7 +320,7 @@ mod tests {
         task_b
             .await
             .expect("second tokio task should complete successfully");
-        assert!(current_experiment().is_none());
+        assert!(ExperimentRun::current().is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -266,19 +329,19 @@ mod tests {
 
         let outer = tokio::spawn(
             async {
-                let current = current_experiment().expect("current experiment should be set");
+                let current = ExperimentRun::current().expect("current experiment should be set");
                 assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
 
                 let inner = tokio::spawn(
                     async {
                         let current =
-                            current_experiment().expect("current experiment should be set");
+                            ExperimentRun::current().expect("current experiment should be set");
                         assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
 
                         tokio::task::yield_now().await;
 
-                        let current =
-                            current_experiment().expect("current experiment should still be set");
+                        let current = ExperimentRun::current()
+                            .expect("current experiment should still be set");
                         assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
                     }
                     .in_current_experiment(),
@@ -287,19 +350,19 @@ mod tests {
                 tokio::task::yield_now().await;
 
                 let current =
-                    current_experiment().expect("outer current experiment should still be set");
+                    ExperimentRun::current().expect("outer current experiment should still be set");
                 assert_eq!(current.id().as_str(), "ambient-test-tokio-nested");
 
                 inner
                     .await
                     .expect("nested tokio task should complete successfully");
             }
-            .in_experiment(run.handle()),
+            .in_experiment(&run),
         );
 
         outer
             .await
             .expect("outer tokio task should complete successfully");
-        assert!(current_experiment().is_none());
+        assert!(ExperimentRun::current().is_none());
     }
 }

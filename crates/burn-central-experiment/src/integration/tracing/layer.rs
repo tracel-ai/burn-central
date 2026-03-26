@@ -1,13 +1,22 @@
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    current_experiment,
+    ExperimentRun,
+    context::ExperimentGlobalExt,
     integration::tracing::{
         registry::TracingRegistry,
         visitor::{EventFieldVisitor, SpanFields},
     },
 };
 
+/// `tracing_subscriber` layer that forwards events into experiment logs.
+///
+/// The layer resolves the destination experiment in two steps:
+/// 1. a span-bound experiment id created by
+///    [`super::ExperimentTracingExt::tracing_span`]
+/// 2. the current ambient experiment from [`crate::ExperimentGlobalExt`]
+///
+/// Construct it directly or use [`super::tracing_log_layer`] for a named helper function.
 #[derive(Debug, Default)]
 pub struct ExperimentTracingLogLayer;
 
@@ -76,7 +85,7 @@ where
                 Some(handle) => handle,
                 None => return,
             },
-            None => match current_experiment() {
+            None => match ExperimentRun::current() {
                 Some(handle) => handle,
                 None => return,
             },

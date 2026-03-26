@@ -1,23 +1,35 @@
+//! Error types returned by experiment operations.
+
+/// Broad category for an [`ExperimentError`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExperimentErrorKind {
-    /// Caused by an operation that explicitly observes experiment cancellation.
+    /// The operation stopped because cancellation was observed.
     Cancelled,
-    /// Caused by an attempt to operate on an experiment that has already been finished (either successfully or with failure).
+
+    /// The operation attempted to use a run that has already completed.
     AlreadyFinished,
-    /// Caused by an attempt to use an experiment handle that points to an experiment that is no longer active (e.g., due to cancellation or completion).
+
+    /// The handle points to a run that is no longer active.
     InactiveRun,
-    /// Caused by an error during artifact related operations.
+
+    /// Artifact encoding, decoding, or transport failed.
     Artifact,
-    /// Caused by an internal error. This is a catch-all for errors that don't fit into the other categories.
+
+    /// Internal or backend-specific failure that does not fit another category.
     Internal,
 }
 
-/// The main error type for experiment operations.
+/// Error returned by experiment operations.
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct ExperimentError {
+    /// High-level category for the failure.
     pub kind: ExperimentErrorKind,
+
+    /// Human-readable error summary.
     pub message: String,
+
+    /// Optional lower-level source error.
     #[source]
     pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }

@@ -1,28 +1,31 @@
-//! Tracing integration for experiment log forwarding.
+//! Tracing integration for routing `tracing` events into experiments.
 //!
-//! The default path is to enter an ambient experiment scope with
-//! [`crate::ExperimentRun::in_scope`], [`crate::ExperimentHandle::in_scope`], or
-//! [`crate::ExperimentInstrument::in_experiment`]. The tracing layer will forward events to the
-//! current ambient experiment automatically.
+//! Install [`tracing_log_layer`] or call [`try_init_tracing_subscriber`] to enable forwarding.
+//! Once installed, you can choose between two routing styles:
+//! - ambient routing with [`crate::ExperimentGlobalExt::enter`],
+//!   [`crate::ExperimentGlobalExt::in_scope`], or
+//!   [`crate::ExperimentInstrument::in_experiment`]
+//! - explicit span routing with [`ExperimentTracingExt::tracing_span`]
 //!
-//! Use [`experiment_span`] when you want explicit span-based routing without ambient scope.
+//! Ambient routing is usually the simplest option when your code already has access to an
+//! [`crate::ExperimentRun`] or [`crate::ExperimentRunHandle`]. Span routing is useful when you
+//! need to bind logs to an experiment without relying on thread-local ambient state.
 
-use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::ExperimentHandle;
-use crate::integration::tracing::layer::ExperimentTracingLogLayer;
+use crate::{ExperimentRun, ExperimentRunHandle};
 
 mod layer;
 pub(crate) mod registry;
 mod visitor;
 
-/// Create a tracing layer that forwards tracing events to the active experiment in the current
+pub use layer::ExperimentTracingLogLayer;
+
+/// Create a layer that forwards `tracing` events to the experiment associated with the current
 /// tracing scope.
-pub fn tracing_log_layer<S>() -> impl tracing_subscriber::Layer<S>
-where
-    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
-{
+///
+/// This is a convenience constructor for [`ExperimentTracingLogLayer`].
+pub fn tracing_log_layer() -> ExperimentTracingLogLayer {
     ExperimentTracingLogLayer
 }
 
@@ -31,6 +34,8 @@ where
 ///
 /// Returns `true` when a subscriber was installed and `false` when one was already installed or
 /// initialization otherwise failed.
+///
+/// This is a convenience for binaries that do not already configure their own subscriber.
 pub fn try_init_tracing_subscriber() -> bool {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -41,13 +46,48 @@ pub fn try_init_tracing_subscriber() -> bool {
         .is_ok()
 }
 
-/// Create a tracing span bound to the given experiment.
-///
-/// Events recorded within this span are routed to the experiment even when no ambient experiment
-/// scope is active.
-pub fn experiment_span(experiment: impl Into<ExperimentHandle>) -> tracing::Span {
+/// Build an explicit tracing span tied to a specific experiment.
+fn experiment_span(experiment: impl Into<ExperimentRunHandle>) -> tracing::Span {
     let experiment = experiment.into();
     tracing::info_span!("experiment", experiment_id = %experiment.id())
+}
+
+/// Extension trait for creating explicit experiment-bound tracing spans.
+///
+/// Implemented for both [`ExperimentRun`] and [`ExperimentRunHandle`].
+pub trait ExperimentTracingExt {
+    /// Create a tracing span bound to this experiment.
+    ///
+    /// Use this when ambient routing through [`crate::ExperimentGlobalExt`] is not practical or
+    /// when you want the routing to be explicit in the span tree.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use burn_central_experiment::ExperimentRun;
+    /// use burn_central_experiment::integration::tracing::{ExperimentTracingExt};
+    ///
+    /// # fn main() {
+    /// let experiment = ExperimentRun::local("/tmp/experiments").unwrap();
+    /// let span: tracing::Span = experiment.tracing_span();
+    /// let _guard = span.enter();
+    /// tracing::info!("this event is routed to the experiment");
+    /// # }
+    /// ```
+    #[must_use = "span must be entered to route events"]
+    fn tracing_span(&self) -> tracing::Span;
+}
+
+impl ExperimentTracingExt for ExperimentRun {
+    fn tracing_span(&self) -> tracing::Span {
+        experiment_span(self)
+    }
+}
+
+impl ExperimentTracingExt for ExperimentRunHandle {
+    fn tracing_span(&self) -> tracing::Span {
+        experiment_span(self.clone())
+    }
 }
 
 #[cfg(test)]
@@ -56,6 +96,7 @@ mod tests {
 
     use tracing_subscriber::layer::SubscriberExt;
 
+    use crate::context::ExperimentGlobalExt;
     use crate::error::ExperimentError;
     use crate::reader::{ExperimentArtifactReader, ExperimentReaderError, LoadedArtifact};
     use crate::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
@@ -116,12 +157,11 @@ mod tests {
         let run = create_run("trace-test-1", session.clone());
         let subscriber = tracing_subscriber::registry().with(tracing_log_layer());
 
-        tracing::subscriber::with_default(
-            subscriber,
-            run.bind_current(|| {
+        tracing::subscriber::with_default(subscriber, || {
+            run.in_scope(|| {
                 tracing::info!(step = 3u64, "epoch completed");
-            }),
-        );
+            })
+        });
 
         let events = session.events.lock().unwrap();
         assert_eq!(events.len(), 1);

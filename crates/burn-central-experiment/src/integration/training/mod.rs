@@ -1,25 +1,23 @@
-//! Burn `train` integrations backed by [`crate::ExperimentRun`].
+//! Burn `train` adapters backed by an [`crate::ExperimentRun`].
 //!
-//! These adapters let Burn learners write metrics and checkpoints into an experiment run and
-//! react to experiment cancellation through Burn's [`burn::train::Interrupter`].
+//! These adapters let learners emit metrics, write checkpoints, and respond to experiment
+//! cancellation without each training loop needing to know about the underlying experiment
+//! backend.
 //!
-//! Tracing log forwarding lives in the sibling [`super::tracing`] module.
+//! Import [`ExperimentTrainingExt`] for the ergonomic constructors, or use the concrete adapter
+//! types directly.
 //!
-//! ```ignore
-//! use burn::train::LearnerBuilder;
-//! use burn_central::experiment::ExperimentRun;
-//! use burn_central::experiment::integration::training::{
-//!     ExperimentCheckpointRecorder,
-//!     ExperimentMetricLogger,
-//!     experiment_interrupter,
-//! };
+//! # Example
 //!
-//! let experiment: ExperimentRun = /* create a remote or local run */;
+//! ```no_run
+//! use burn_central_experiment::ExperimentRun;
+//! use burn_central_experiment::integration::training::ExperimentTrainingExt;
 //!
-//! LearnerBuilder::new("a_directory_of_your_choice")
-//!     .with_metric_logger(ExperimentMetricLogger::new(&experiment))
-//!     .with_file_checkpointer(ExperimentCheckpointRecorder::new(&experiment))
-//!     .with_interrupter(experiment_interrupter(&experiment));
+//! let experiment = ExperimentRun::local("./runs").unwrap();
+//!
+//! let _metrics = experiment.metric_logger();
+//! let _checkpoints = experiment.checkpoint_recorder();
+//! let _interrupter = experiment.interrupter();
 //! ```
 
 mod checkpoint;
@@ -29,3 +27,45 @@ mod metric;
 pub use checkpoint::ExperimentCheckpointRecorder;
 pub use interrupter::experiment_interrupter;
 pub use metric::ExperimentMetricLogger;
+
+use crate::ExperimentRun;
+
+/// Extension trait adding Burn `train` adapter constructors to [`ExperimentRun`].
+pub trait ExperimentTrainingExt {
+    /// Create a new [`ExperimentMetricLogger`] for this run.
+    fn metric_logger(&self) -> ExperimentMetricLogger;
+
+    /// Create a new [`ExperimentCheckpointRecorder`] for this run.
+    fn checkpoint_recorder(&self) -> ExperimentCheckpointRecorder;
+
+    /// Create a new [`burn::train::Interrupter`] linked to this run's cancellation token.
+    fn interrupter(&self) -> burn::train::Interrupter;
+}
+
+impl ExperimentTrainingExt for ExperimentRun {
+    fn metric_logger(&self) -> ExperimentMetricLogger {
+        ExperimentMetricLogger::new(self)
+    }
+
+    fn checkpoint_recorder(&self) -> ExperimentCheckpointRecorder {
+        ExperimentCheckpointRecorder::new(self)
+    }
+
+    fn interrupter(&self) -> burn::train::Interrupter {
+        experiment_interrupter(self)
+    }
+}
+
+impl ExperimentTrainingExt for crate::ExperimentRunHandle {
+    fn metric_logger(&self) -> ExperimentMetricLogger {
+        ExperimentMetricLogger::new(self.clone())
+    }
+
+    fn checkpoint_recorder(&self) -> ExperimentCheckpointRecorder {
+        ExperimentCheckpointRecorder::new(self.clone())
+    }
+
+    fn interrupter(&self) -> burn::train::Interrupter {
+        experiment_interrupter(self.clone())
+    }
+}

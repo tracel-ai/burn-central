@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use crate::ArtifactKind;
-use crate::{ExperimentHandle, ExperimentRun};
+use crate::ExperimentRunHandle;
 use burn::record::{
     FileRecorder, FullPrecisionSettings, NamedMpkBytesRecorder, Record, Recorder, RecorderError,
 };
@@ -91,9 +91,12 @@ where
 }
 
 /// Experiment-backed implementation of Burn's [`Recorder`] and [`FileRecorder`] traits.
+///
+/// Prefer [`crate::integration::training::ExperimentTrainingExt::checkpoint_recorder`] when you
+/// already have an [`ExperimentRun`][crate::ExperimentRun] in scope.
 #[derive(Clone)]
 pub struct ExperimentCheckpointRecorder {
-    experiment_handle: ExperimentHandle,
+    experiment_handle: ExperimentRunHandle,
 }
 
 impl fmt::Debug for ExperimentCheckpointRecorder {
@@ -105,9 +108,9 @@ impl fmt::Debug for ExperimentCheckpointRecorder {
 
 impl ExperimentCheckpointRecorder {
     /// Create a recorder backed by the provided experiment run.
-    pub fn new(experiment: &ExperimentRun) -> Self {
+    pub fn new(experiment: impl Into<ExperimentRunHandle>) -> Self {
         Self {
-            experiment_handle: experiment.handle(),
+            experiment_handle: experiment.into(),
         }
     }
 }

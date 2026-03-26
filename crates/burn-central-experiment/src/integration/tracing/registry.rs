@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::{ExperimentHandle, ExperimentId};
+use crate::{ExperimentId, ExperimentRunHandle};
 
 static TRACING_REGISTRY: OnceLock<TracingRegistry> = OnceLock::new();
 
@@ -11,7 +11,7 @@ pub(crate) struct TracingRegistry {
 }
 
 struct RegisteredHandle {
-    handle: ExperimentHandle,
+    handle: ExperimentRunHandle,
     ref_count: usize,
 }
 
@@ -24,7 +24,7 @@ impl TracingRegistry {
         TRACING_REGISTRY.get_or_init(Default::default)
     }
 
-    pub(crate) fn register_handle(&self, handle: ExperimentHandle) -> TracingRegistration {
+    pub(crate) fn register_handle(&self, handle: ExperimentRunHandle) -> TracingRegistration {
         let experiment_id = handle.id().clone();
         let mut handles = self.handles.lock().unwrap();
 
@@ -46,7 +46,7 @@ impl TracingRegistry {
         TracingRegistration { experiment_id }
     }
 
-    pub(crate) fn get_handle(&self, experiment_id: &ExperimentId) -> Option<ExperimentHandle> {
+    pub(crate) fn get_handle(&self, experiment_id: &ExperimentId) -> Option<ExperimentRunHandle> {
         let handles = self.handles.lock().unwrap();
         handles.get(experiment_id).map(|entry| entry.handle.clone())
     }
