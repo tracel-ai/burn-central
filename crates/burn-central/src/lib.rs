@@ -54,10 +54,12 @@ pub use burn_central_macros as macros;
 pub use burn_central_runtime as runtime;
 
 /// Inference contracts and adapters.
+#[doc(hidden)]
 #[doc(inline)]
 pub use burn_central_inference as inference;
 
 /// On-device fleet synchronization helpers.
+#[doc(hidden)]
 #[doc(inline)]
 pub use burn_central_fleet as fleet;
 
