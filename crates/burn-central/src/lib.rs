@@ -21,8 +21,6 @@
 //! - [`macros`]: attribute macros used to register training and inference routines.
 //! - [`runtime`]: runtime support for executing registered routines.
 //! - [`artifact`]: bundle and artifact utilities.
-//! - [`inference`]: inference contracts and adapters.
-//! - [`fleet`]: on-device fleet synchronization helpers.
 //!
 //! ## Registering Routines
 //!
