@@ -1,12 +1,14 @@
-use tracing_subscriber::registry::LookupSpan;
+use std::fmt::Write as _;
+
+use tracing_subscriber::{
+    fmt::format::{DefaultFields, FormatFields, Writer},
+    registry::LookupSpan,
+};
 
 use crate::{
     ExperimentRun,
     context::ExperimentGlobalExt,
-    integration::tracing::{
-        registry::TracingRegistry,
-        visitor::{EventFieldVisitor, SpanFields},
-    },
+    integration::tracing::{registry::TracingRegistry, visitor::SpanFields},
 };
 
 /// `tracing_subscriber` layer that forwards events into experiment logs.
@@ -63,9 +65,6 @@ where
             return;
         }
 
-        let mut visitor = EventFieldVisitor::default();
-        event.record(&mut visitor);
-
         let experiment_id = if let Some(scope) = ctx.event_scope(event) {
             let mut experiment_id = None;
             for span in scope.from_root() {
@@ -91,33 +90,22 @@ where
             },
         };
 
-        let _ = handle.log_info(format_event(metadata, visitor.message, visitor.fields));
+        let rendered = match format_event(event) {
+            Some(rendered) => rendered,
+            None => return,
+        };
+
+        let _ = handle.log_info(rendered);
     }
 }
 
-fn format_event(
-    metadata: &tracing::Metadata<'_>,
-    message: Option<String>,
-    fields: Vec<(String, String)>,
-) -> String {
-    let mut rendered = format!(
-        "[{}] {}",
-        metadata.level(),
-        message.unwrap_or_else(|| metadata.name().to_string())
-    );
-
-    if !fields.is_empty() {
-        rendered.push(' ');
-        rendered.push_str(
-            &fields
-                .into_iter()
-                .map(|(key, value)| format!("{key}={value}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
-    }
-
+fn format_event(event: &tracing::Event<'_>) -> Option<String> {
+    let metadata = event.metadata();
+    let mut rendered = String::new();
+    write!(&mut rendered, "[{}] ", metadata.level()).ok()?;
+    DefaultFields::new()
+        .format_fields(Writer::new(&mut rendered), event)
+        .ok()?;
     rendered.push('\n');
-
-    rendered
+    Some(rendered)
 }

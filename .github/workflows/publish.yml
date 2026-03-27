@@ -20,13 +20,49 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
+  burn-central-inference:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: burn-central-inference
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  burn-central-artifact:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: burn-central-artifact
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  burn-central-experiment:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: burn-central-experiment
+    needs:
+      - burn-central-artifact
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
+  burn-central-fleet:
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
+    with:
+      crate: burn-central-fleet
+    needs:
+      - burn-central-artifact
+      - burn-central-inference
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  # --------------------------------------------------------------------------------
   burn-central-runtime:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
       crate: burn-central-runtime
     needs:
+      - burn-central-artifact
       - burn-central-core
-      - burn-central-macros
+      - burn-central-experiment
+      - burn-central-fleet
+      - burn-central-inference
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   # --------------------------------------------------------------------------------
@@ -35,7 +71,10 @@ jobs:
     with:
       crate: burn-central
     needs:
-      - burn-central-core
+      - burn-central-artifact
+      - burn-central-experiment
+      - burn-central-fleet
+      - burn-central-inference
       - burn-central-macros
       - burn-central-runtime
     secrets:
