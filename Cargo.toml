@@ -58,8 +58,6 @@ opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
 burn-central-client = { version = "0.6.1" }
-# burn-central-client = "0.5.0"
-
 
 ## Crate
 burn-central-core = { path = "crates/burn-central-core", version = "0.6.0" }
