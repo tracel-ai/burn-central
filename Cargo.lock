@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "burn-central-artifact",
  "burn-central-client",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-artifact"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "crossbeam",
  "reqwest",
@@ -382,11 +382,11 @@ dependencies = [
 
 [[package]]
 name = "burn-central-core"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "burn-central-experiment"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "burn",
  "burn-central-artifact",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-fleet"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "arc-swap",
  "burn",
@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-inference"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "crossbeam",
  "serde",
@@ -438,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-macros"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "burn-central-runtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "burn",
@@ -5715,7 +5715,7 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xtask"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "strum",

@@ -8,7 +8,7 @@ members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
-version = "0.5.0"
+version = "0.6.0"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87.0"
@@ -62,13 +62,13 @@ burn-central-client = { version = "0.6.1" }
 
 
 ## Crate
-burn-central-core = { path = "crates/burn-central-core", version = "0.5.0" }
-burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.5.0" }
-burn-central-macros = { path = "crates/burn-central-macros", version = "0.5.0" }
-burn-central-inference = { path = "crates/burn-central-inference", version = "0.5.0" }
-burn-central-fleet = { path = "crates/burn-central-fleet", version = "0.5.0" }
-burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.5.0" }
-burn-central-experiment = { path = "crates/burn-central-experiment", version = "0.5.0" }
+burn-central-core = { path = "crates/burn-central-core", version = "0.6.0" }
+burn-central-runtime = { path = "crates/burn-central-runtime", version = "0.6.0" }
+burn-central-macros = { path = "crates/burn-central-macros", version = "0.6.0" }
+burn-central-inference = { path = "crates/burn-central-inference", version = "0.6.0" }
+burn-central-fleet = { path = "crates/burn-central-fleet", version = "0.6.0" }
+burn-central-artifact = { path = "crates/burn-central-artifact", version = "0.6.0" }
+burn-central-experiment = { path = "crates/burn-central-experiment", version = "0.6.0" }
 
 ### For xtask crate ###
 tracel-xtask = "4.13.7"
