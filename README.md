@@ -25,7 +25,7 @@ Add Burn Central to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-burn-central = "0.5.0"
+burn-central = "0.6.0"
 ```
 
 ## Quick Start
