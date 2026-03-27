@@ -1,5 +1,6 @@
 [package]
 name = "burn-central-artifact"
+description = "Artifact bundle and transfer utilities for Burn Central SDK."
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
