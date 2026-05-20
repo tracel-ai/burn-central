@@ -21,6 +21,11 @@ impl ProgressId {
     pub fn new(id: NonZeroU64) -> Self {
         Self(id)
     }
+
+    /// Return the underlying numeric identifier.
+    pub fn as_u64(self) -> u64 {
+        self.0.get()
+    }
 }
 
 /// Metadata describing a progress node when it starts.

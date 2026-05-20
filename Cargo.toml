@@ -59,7 +59,7 @@ tracing-subscriber = "0.3.22"
 opentelemetry = { version = "0.31.0", features = ["metrics"] }
 
 ## External Crate
-burn-central-client = { version = "0.7.0", default-features = false, features = [
+burn-central-client = { path = "../burn-central-client/burn-central-client", default-features = false, features = [
     "central",
     "station",
 ] }
