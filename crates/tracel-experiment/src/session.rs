@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tracel_artifact::bundle::FsBundle;
 
 use crate::{
-    ArtifactKind, ExperimentId, MetricSpec, MetricValue, error::ExperimentError,
-    progress::ProgressEvent, reader::ArtifactRef,
+    ArtifactKind, ExperimentId, MetricSpec, MetricValue, activity::ActivityEvent,
+    error::ExperimentError, reader::ArtifactRef,
 };
 
 #[derive(Debug, Clone)]
@@ -33,7 +33,7 @@ pub enum Event {
         experiment_id: ExperimentId,
         reference: ArtifactRef,
     },
-    Progress(ProgressEvent),
+    Activity(ActivityEvent),
 }
 
 /// Final completion state recorded for an experiment run.

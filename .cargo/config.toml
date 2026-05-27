@@ -2,4 +2,4 @@
 xtask = "run --target-dir target/xtask/debug --package xtask --bin xtask --"
 
 [patch.crates-io]
-burn-central-client = { git = "https://github.com/tracel-ai/burn-central-client", rev = "6668f50563cd46bed8abaa1d399622830d4a18e3" }
+burn-central-client = { path = "../burn-central-client/burn-central-client" }

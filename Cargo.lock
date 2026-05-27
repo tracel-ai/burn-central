@@ -360,7 +360,6 @@ dependencies = [
 [[package]]
 name = "burn-central-client"
 version = "0.7.0"
-source = "git+https://github.com/tracel-ai/burn-central-client?rev=6668f50563cd46bed8abaa1d399622830d4a18e3#6668f50563cd46bed8abaa1d399622830d4a18e3"
 dependencies = [
  "reqwest 0.13.4",
  "serde",

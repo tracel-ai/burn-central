@@ -22,9 +22,9 @@ use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
 use serde::Serialize;
 
+mod activity;
 mod cancellation;
 mod context;
-mod progress;
 mod provider;
 pub mod reader;
 pub mod session;
@@ -32,9 +32,15 @@ pub mod session;
 pub mod error;
 pub mod integration;
 
+pub use activity::{ActivityBuilder, ActivityGuard, Metered, Unmetered};
+pub use cancellation::{CancelToken, Cancellable};
+pub use context::{
+    CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
+};
+
+use crate::activity::AtomicActivityIdAllocator;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
-use crate::progress::AtomicProgressIdAllocator;
 use crate::reader::ExperimentArtifactReader;
 use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 pub use cancellation::{CancelToken, Cancellable};
@@ -180,7 +186,7 @@ struct RunInner {
     state: Mutex<RunState>,
     session: Box<dyn ExperimentSession>,
     reader: Box<dyn ExperimentArtifactReader>,
-    progress_id_allocator: Arc<AtomicProgressIdAllocator>,
+    activity_id_allocator: Arc<AtomicActivityIdAllocator>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,7 +216,7 @@ impl ExperimentRun {
             state: Mutex::new(RunState::Active),
             session: Box::new(session),
             reader: Box::new(reader),
-            progress_id_allocator: Arc::new(AtomicProgressIdAllocator::new()),
+            activity_id_allocator: Arc::new(AtomicActivityIdAllocator::new()),
         });
 
         let handle = ExperimentRunHandle {
@@ -340,11 +346,12 @@ impl ExperimentRun {
         self.handle.use_artifact(experiment_id, name, settings)
     }
 
-    /// Create a progress builder for the run with the provided name.
+    /// Create an activity builder for the run with the provided name.
     ///
-    /// The returned builder can be used to start a progress node and receive a guard for updating and finishing it.
-    pub fn progress(&self, name: impl Into<String>) -> ProgressBuilder {
-        self.handle.progress(name)
+    /// Call [`ActivityBuilder::progress`] before starting when the activity should have a numeric
+    /// meter.
+    pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
+        self.handle.activity(name)
     }
 }
 
@@ -520,28 +527,28 @@ impl ExperimentRunHandle {
         })
     }
 
-    /// See [`ExperimentRun::progress`].
+    /// See [`ExperimentRun::activity`].
     ///
-    /// If the originating run has already been finished or dropped, the progress builder will be a no-op.
-    pub fn progress(&self, name: impl Into<String>) -> ProgressBuilder {
+    /// If the originating run has already been finished or dropped, the activity builder will be a no-op.
+    pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
         let inner = match self.upgrade() {
             Ok(inner) => inner,
             Err(_) => {
-                return ProgressBuilder::new(
+                return ActivityBuilder::new(
                     Arc::new(|_| {}),
-                    Arc::new(AtomicProgressIdAllocator::new()),
+                    Arc::new(AtomicActivityIdAllocator::new()),
                     name.into(),
                 );
             }
         };
-        ProgressBuilder::new(
+        ActivityBuilder::new(
             Arc::new({
                 let handle = self.clone();
                 move |e| {
-                    handle.record_event(Event::Progress(e)).ok();
+                    handle.record_event(Event::Activity(e)).ok();
                 }
             }),
-            inner.progress_id_allocator.clone(),
+            inner.activity_id_allocator.clone(),
             name.into(),
         )
     }
@@ -607,7 +614,7 @@ impl Drop for ExperimentRun {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::progress::ProgressEvent;
+    use crate::activity::ActivityEvent;
     use crate::reader::{ExperimentReaderError, LoadedArtifact};
     use crate::session::BundleFn;
 
@@ -733,27 +740,27 @@ mod tests {
     }
 
     #[test]
-    fn run_progress_start_records_progress_event() {
+    fn run_metered_activity_start_records_progress_event() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 
-        let _progress = run.progress("load").start();
+        let _progress = run.activity("load").progress().start();
 
         let events = session.events.lock().unwrap();
         assert!(matches!(
             events.as_slice(),
-            [Event::Progress(ProgressEvent::Started { node })] if node.name == "load"
+            [Event::Activity(ActivityEvent::Started { activity })] if activity.name == "load"
         ));
     }
 
     #[test]
-    fn dropped_run_handle_progress_records_no_event() {
+    fn dropped_run_handle_activity_records_no_event() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
         let handle = run.handle();
         drop(run);
 
-        let _progress = handle.progress("late").start();
+        let _progress = handle.activity("late").progress().start();
 
         let events = session.events.lock().unwrap();
         assert!(events.is_empty());

@@ -6,8 +6,8 @@ use tracel_experiment::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
 
 use burn_central_client::WebSocketClient;
 use burn_central_client::websocket::{
+    ActivityEventRequest, ActivityMeterRequest, ActivityRequest, ActivityStatusRequest,
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
-    ProgressEventRequest, ProgressNodeRequest, ProgressStatusRequest,
 };
 use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
@@ -19,7 +19,7 @@ use super::socket::ThreadError;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::{
     ArtifactKind, CancelToken, MetricSpec, MetricValue,
-    progress::{ProgressEvent, ProgressStatus},
+    activity::{ActivityEvent, ActivityStatus},
 };
 
 struct ActiveSession {
@@ -129,8 +129,8 @@ impl ExperimentSession for RemoteExperimentSession {
             } => ExperimentMessage::InputUsed(InputUsed::Artifact {
                 artifact_id: reference.id,
             }),
-            Event::Progress(progress_event) => {
-                ExperimentMessage::Progress(to_remote_progress_event(progress_event))
+            Event::Activity(activity_event) => {
+                ExperimentMessage::Activity(to_remote_activity_event(activity_event))
             }
         };
 
@@ -217,36 +217,37 @@ fn to_remote_metric_logs(items: Vec<MetricValue>) -> Vec<MetricLog> {
         .collect()
 }
 
-fn to_remote_progress_event(event: ProgressEvent) -> ProgressEventRequest {
+fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
     match event {
-        ProgressEvent::Started { node } => ProgressEventRequest::Started {
-            node: ProgressNodeRequest {
-                id: node.id.as_u64(),
-                parent: node.parent.map(|parent| parent.as_u64()),
-                name: node.name,
-                unit: node.unit,
-                total: node.total,
-                attributes: node.attributes,
+        ActivityEvent::Started { activity } => ActivityEventRequest::Started {
+            activity: ActivityRequest {
+                id: activity.id.as_u64(),
+                parent: activity.parent.map(|parent| parent.as_u64()),
+                name: activity.name,
+                meter: activity.meter.map(|meter| ActivityMeterRequest {
+                    unit: meter.unit,
+                    total: meter.total,
+                }),
+                attributes: activity.attributes,
             },
         },
-        ProgressEvent::Updated { id, current, total } => ProgressEventRequest::Updated {
+        ActivityEvent::Updated { id, current } => ActivityEventRequest::Updated {
             id: id.as_u64(),
             current,
-            total,
         },
-        ProgressEvent::Message { id, message } => ProgressEventRequest::Message {
+        ActivityEvent::Message { id, message } => ActivityEventRequest::Message {
             id: id.as_u64(),
             message,
         },
-        ProgressEvent::Finished {
+        ActivityEvent::Finished {
             id,
             status,
             message,
-        } => ProgressEventRequest::Finished {
+        } => ActivityEventRequest::Finished {
             id: id.as_u64(),
             status: match status {
-                ProgressStatus::Success => ProgressStatusRequest::Success,
-                ProgressStatus::Abandoned => ProgressStatusRequest::Abandoned,
+                ActivityStatus::Success => ActivityStatusRequest::Success,
+                ActivityStatus::Abandoned => ActivityStatusRequest::Abandoned,
             },
             message,
         },
