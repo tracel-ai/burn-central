@@ -427,13 +427,7 @@ impl ActiveActivity {
 
 impl Drop for ActiveActivity {
     fn drop(&mut self) {
-        let status = if self.cancel_token.is_cancelled() {
-            ActivityStatus::Cancelled
-        } else {
-            ActivityStatus::Abandoned
-        };
-
-        self.finish_inner(status, None);
+        self.finish_inner(ActivityStatus::Abandoned, None);
     }
 }
 
@@ -455,7 +449,11 @@ impl<State> ActivityGuard<State> {
     }
 
     /// Return whether cancellation has been requested for this activity.
-    pub fn is_cancelled(&self) -> bool {
+    ///
+    /// This is a cooperative signal inherited from the run or parent activity. It does not force
+    /// the activity's terminal status; call [`Self::finish_cancelled`] when the activity actually
+    /// stops because of the request.
+    pub fn is_cancel_requested(&self) -> bool {
         self.inner.cancel_token.is_cancelled()
     }
 
@@ -492,12 +490,12 @@ impl<State> ActivityGuard<State> {
     }
 
     /// Mark the activity as cancelled.
-    pub fn cancel(mut self) {
+    pub fn finish_cancelled(mut self) {
         self.inner.finish_inner(ActivityStatus::Cancelled, None);
     }
 
     /// Mark the activity as cancelled with a message.
-    pub fn cancel_with_message(mut self, message: impl Into<String>) {
+    pub fn finish_cancelled_with_message(mut self, message: impl Into<String>) {
         self.inner
             .finish_inner(ActivityStatus::Cancelled, Some(message.into()));
     }
@@ -679,19 +677,19 @@ mod tests {
     }
 
     #[test]
-    fn child_activity_token_is_linked_to_parent_activity_token() {
+    fn child_activity_cancel_request_is_linked_to_parent_activity_token() {
         let reporter = Arc::new(MockReporter::default());
         let parent = builder(reporter, "parent").start();
         let child = parent.activity("child").start();
 
         parent.cancel_token().cancel();
 
-        assert!(parent.is_cancelled());
-        assert!(child.is_cancelled());
+        assert!(parent.is_cancel_requested());
+        assert!(child.is_cancel_requested());
     }
 
     #[test]
-    fn drop_reports_cancelled_when_token_was_cancelled() {
+    fn drop_reports_abandoned_even_when_cancel_was_requested() {
         let reporter = Arc::new(MockReporter::default());
         let guard = builder(reporter.clone(), "node").start();
 
@@ -702,7 +700,7 @@ mod tests {
         assert!(matches!(
             events.last(),
             Some(ActivityEvent::Finished {
-                status: ActivityStatus::Cancelled,
+                status: ActivityStatus::Abandoned,
                 ..
             })
         ));
@@ -712,7 +710,7 @@ mod tests {
     fn cancelled_reports_cancelled_completion() {
         let reporter = Arc::new(MockReporter::default());
 
-        builder(reporter.clone(), "node").start().cancel();
+        builder(reporter.clone(), "node").start().finish_cancelled();
 
         let events = reporter.events();
         assert!(matches!(
