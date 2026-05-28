@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
@@ -19,7 +19,7 @@ use super::socket::ThreadError;
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::{
     ArtifactKind, CancelToken, MetricSpec, MetricValue,
-    activity::{ActivityEvent, ActivityStatus},
+    activity::{ActivityCancellationRegistry, ActivityEvent, ActivityId, ActivityStatus},
 };
 
 struct ActiveSession {
@@ -49,6 +49,7 @@ pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 pub struct RemoteExperimentSession {
     artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
+    activity_cancellations: Arc<ActivityCancellationRegistry>,
 }
 
 impl RemoteExperimentSession {
@@ -60,11 +61,19 @@ impl RemoteExperimentSession {
     ) -> Self {
         let log_store = TempLogStore::new(log_uploader);
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(websocket, log_store, receiver, cancel_token);
+        let activity_cancellations = Arc::new(ActivityCancellationRegistry::default());
+        let socket = ExperimentSocket::new(
+            websocket,
+            log_store,
+            receiver,
+            cancel_token,
+            activity_cancellations.clone(),
+        );
 
         Self {
             artifact_uploader,
             active: Mutex::new(Some(ActiveSession { sender, socket })),
+            activity_cancellations,
         }
     }
 
@@ -135,6 +144,20 @@ impl ExperimentSession for RemoteExperimentSession {
         };
 
         self.send(message)
+    }
+
+    fn register_activity_cancellation(
+        &self,
+        id: ActivityId,
+        token: CancelToken,
+    ) -> Result<(), ExperimentError> {
+        self.activity_cancellations.register(id, token);
+        Ok(())
+    }
+
+    fn unregister_activity_cancellation(&self, id: ActivityId) -> Result<(), ExperimentError> {
+        self.activity_cancellations.unregister(id);
+        Ok(())
     }
 
     fn save_artifact(
@@ -224,6 +247,7 @@ fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
                 id: activity.id.as_u64(),
                 parent: activity.parent.map(|parent| parent.as_u64()),
                 name: activity.name,
+                cancellable: activity.cancellable,
                 meter: activity.meter.map(|meter| ActivityMeterRequest {
                     unit: meter.unit,
                     total: meter.total,
@@ -248,6 +272,7 @@ fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
             status: match status {
                 ActivityStatus::Success => ActivityStatusRequest::Success,
                 ActivityStatus::Abandoned => ActivityStatusRequest::Abandoned,
+                ActivityStatus::Cancelled => ActivityStatusRequest::Cancelled,
             },
             message,
         },

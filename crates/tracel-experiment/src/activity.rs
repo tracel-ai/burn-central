@@ -5,12 +5,15 @@
 //! and explicit or drop-based completion emits [`ActivityEvent::Finished`].
 
 use std::{
+    collections::HashMap,
     num::NonZeroU64,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
+
+use crate::cancellation::CancelToken;
 
 /// Opaque non-zero identifier for an activity.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -46,6 +49,9 @@ pub struct Activity {
     pub parent: Option<ActivityId>,
     /// Human-readable activity name.
     pub name: String,
+    /// Whether this activity can be cancelled by a remote controller.
+    #[serde(default)]
+    pub cancellable: bool,
     /// Numeric meter definition, when this activity has its own meter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meter: Option<ActivityMeter>,
@@ -61,6 +67,8 @@ pub enum ActivityStatus {
     Success,
     /// The activity stopped before successful completion.
     Abandoned,
+    /// The activity stopped because cancellation was requested.
+    Cancelled,
 }
 
 /// Event emitted by an activity.
@@ -99,8 +107,14 @@ pub enum ActivityEvent {
 
 /// Sink for activity events.
 pub trait ActivityEventReporter: Send + Sync {
-    /// Report one progress event.
+    /// Report one activity event.
     fn report(&self, event: ActivityEvent);
+
+    /// Register a cancellable activity token with the active backend session.
+    fn register_cancellation(&self, _id: ActivityId, _token: CancelToken) {}
+
+    /// Unregister a cancellable activity token from the active backend session.
+    fn unregister_cancellation(&self, _id: ActivityId) {}
 }
 
 impl<F> ActivityEventReporter for F
@@ -109,6 +123,32 @@ where
 {
     fn report(&self, event: ActivityEvent) {
         self(event);
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ActivityCancellationRegistry {
+    tokens: Mutex<HashMap<ActivityId, CancelToken>>,
+}
+
+impl ActivityCancellationRegistry {
+    pub(crate) fn register(&self, id: ActivityId, token: CancelToken) {
+        self.tokens.lock().unwrap().insert(id, token);
+    }
+
+    pub(crate) fn unregister(&self, id: ActivityId) {
+        self.tokens.lock().unwrap().remove(&id);
+    }
+
+    pub(crate) fn cancel(&self, id: ActivityId) -> bool {
+        let token = self.tokens.lock().unwrap().get(&id).cloned();
+
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -165,8 +205,10 @@ pub struct Metered {
 pub struct ActivityBuilder<State = Unmetered> {
     reporter: Arc<dyn ActivityEventReporter>,
     id_allocator: Arc<dyn ActivityIdAllocator>,
+    cancellation_parent: CancelToken,
     parent: Option<ActivityId>,
     name: String,
+    cancellable: bool,
     attributes: serde_json::Map<String, serde_json::Value>,
     state: State,
 }
@@ -176,13 +218,16 @@ impl ActivityBuilder<Unmetered> {
     pub(crate) fn new(
         reporter: Arc<dyn ActivityEventReporter>,
         id_allocator: Arc<dyn ActivityIdAllocator>,
+        cancellation_parent: CancelToken,
         name: impl Into<String>,
     ) -> Self {
         Self {
             reporter,
             id_allocator,
+            cancellation_parent,
             parent: None,
             name: name.into(),
+            cancellable: false,
             attributes: serde_json::Map::new(),
             state: Unmetered,
         }
@@ -193,8 +238,10 @@ impl ActivityBuilder<Unmetered> {
         let ActivityBuilder {
             reporter,
             id_allocator,
+            cancellation_parent,
             parent,
             name,
+            cancellable,
             attributes,
             state: _,
         } = self;
@@ -202,8 +249,10 @@ impl ActivityBuilder<Unmetered> {
         ActivityBuilder {
             reporter,
             id_allocator,
+            cancellation_parent,
             parent,
             name,
+            cancellable,
             attributes,
             state: Metered {
                 meter: ActivityMeter {
@@ -249,6 +298,15 @@ impl ActivityBuilder<Metered> {
 }
 
 impl<State> ActivityBuilder<State> {
+    /// Allow this activity to be cancelled by a remote controller.
+    ///
+    /// The activity always has a local cancellation token that participates in parent/run
+    /// cancellation propagation. Marking it cancellable also exposes that token to remote control.
+    pub fn cancellable(mut self) -> Self {
+        self.cancellable = true;
+        self
+    }
+
     /// Add one serializable attribute.
     pub fn attr<T>(mut self, key: impl Into<String>, value: T) -> Result<Self, serde_json::Error>
     where
@@ -280,11 +338,13 @@ impl<State> ActivityBuilder<State> {
 
     fn start_inner(self, meter: Option<ActivityMeter>) -> ActiveActivity {
         let id = self.id_allocator.next_id();
+        let cancel_token = self.cancellation_parent.linked(CancelToken::new());
 
         let activity = Activity {
             id,
             parent: self.parent,
             name: self.name,
+            cancellable: self.cancellable,
             meter,
             attributes: self.attributes,
         };
@@ -293,7 +353,12 @@ impl<State> ActivityBuilder<State> {
             activity: activity.clone(),
         });
 
-        ActiveActivity::new(self.reporter, self.id_allocator, activity)
+        if activity.cancellable {
+            self.reporter
+                .register_cancellation(activity.id, cancel_token.clone());
+        }
+
+        ActiveActivity::new(self.reporter, self.id_allocator, activity, cancel_token)
     }
 }
 
@@ -302,6 +367,7 @@ struct ActiveActivity {
     reporter: Arc<dyn ActivityEventReporter>,
     id_allocator: Arc<dyn ActivityIdAllocator>,
     activity: Activity,
+    cancel_token: CancelToken,
     finished: bool,
 }
 
@@ -311,11 +377,13 @@ impl ActiveActivity {
         reporter: Arc<dyn ActivityEventReporter>,
         id_allocator: Arc<dyn ActivityIdAllocator>,
         activity: Activity,
+        cancel_token: CancelToken,
     ) -> Self {
         Self {
             reporter,
             id_allocator,
             activity,
+            cancel_token,
             finished: false,
         }
     }
@@ -325,8 +393,10 @@ impl ActiveActivity {
         ActivityBuilder {
             reporter: self.reporter.clone(),
             id_allocator: self.id_allocator.clone(),
+            cancellation_parent: self.cancel_token.clone(),
             parent: Some(self.activity.id),
             name: name.into(),
+            cancellable: false,
             attributes: serde_json::Map::new(),
             state: Unmetered,
         }
@@ -351,12 +421,19 @@ impl ActiveActivity {
             status,
             message,
         });
+        self.reporter.unregister_cancellation(self.activity.id);
     }
 }
 
 impl Drop for ActiveActivity {
     fn drop(&mut self) {
-        self.finish_inner(ActivityStatus::Abandoned, None);
+        let status = if self.cancel_token.is_cancelled() {
+            ActivityStatus::Cancelled
+        } else {
+            ActivityStatus::Abandoned
+        };
+
+        self.finish_inner(status, None);
     }
 }
 
@@ -370,6 +447,16 @@ impl<State> ActivityGuard<State> {
     /// Return the activity identifier.
     pub fn id(&self) -> ActivityId {
         self.inner.activity.id
+    }
+
+    /// Return the activity cancellation token.
+    pub fn cancel_token(&self) -> CancelToken {
+        self.inner.cancel_token.clone()
+    }
+
+    /// Return whether cancellation has been requested for this activity.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancel_token.is_cancelled()
     }
 
     /// Create a builder for a child activity without a numeric meter.
@@ -402,6 +489,17 @@ impl<State> ActivityGuard<State> {
     pub fn abandon_with_message(mut self, message: impl Into<String>) {
         self.inner
             .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
+    }
+
+    /// Mark the activity as cancelled.
+    pub fn cancel(mut self) {
+        self.inner.finish_inner(ActivityStatus::Cancelled, None);
+    }
+
+    /// Mark the activity as cancelled with a message.
+    pub fn cancel_with_message(mut self, message: impl Into<String>) {
+        self.inner
+            .finish_inner(ActivityStatus::Cancelled, Some(message.into()));
     }
 }
 
@@ -455,6 +553,7 @@ mod tests {
         ActivityBuilder::new(
             reporter,
             Arc::new(AtomicActivityIdAllocator::new()),
+            CancelToken::new(),
             name.to_string(),
         )
         .progress()
@@ -489,6 +588,7 @@ mod tests {
         let _guard = ActivityBuilder::new(
             reporter.clone(),
             Arc::new(AtomicActivityIdAllocator::new()),
+            CancelToken::new(),
             "epoch",
         )
         .start();
@@ -560,6 +660,65 @@ mod tests {
             events.last(),
             Some(ActivityEvent::Finished {
                 status: ActivityStatus::Abandoned,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn cancellable_activity_reports_control_metadata() {
+        let reporter = Arc::new(MockReporter::default());
+
+        let _guard = builder(reporter.clone(), "node").cancellable().start();
+
+        let events = reporter.events();
+        let ActivityEvent::Started { activity } = &events[0] else {
+            panic!("unexpected event: {:?}", events[0]);
+        };
+        assert!(activity.cancellable);
+    }
+
+    #[test]
+    fn child_activity_token_is_linked_to_parent_activity_token() {
+        let reporter = Arc::new(MockReporter::default());
+        let parent = builder(reporter, "parent").start();
+        let child = parent.activity("child").start();
+
+        parent.cancel_token().cancel();
+
+        assert!(parent.is_cancelled());
+        assert!(child.is_cancelled());
+    }
+
+    #[test]
+    fn drop_reports_cancelled_when_token_was_cancelled() {
+        let reporter = Arc::new(MockReporter::default());
+        let guard = builder(reporter.clone(), "node").start();
+
+        guard.cancel_token().cancel();
+        drop(guard);
+
+        let events = reporter.events();
+        assert!(matches!(
+            events.last(),
+            Some(ActivityEvent::Finished {
+                status: ActivityStatus::Cancelled,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn cancelled_reports_cancelled_completion() {
+        let reporter = Arc::new(MockReporter::default());
+
+        builder(reporter.clone(), "node").start().cancel();
+
+        let events = reporter.events();
+        assert!(matches!(
+            events.last(),
+            Some(ActivityEvent::Finished {
+                status: ActivityStatus::Cancelled,
                 ..
             })
         ));

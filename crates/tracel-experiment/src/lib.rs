@@ -32,13 +32,15 @@ pub mod session;
 pub mod error;
 pub mod integration;
 
-pub use activity::{ActivityBuilder, ActivityGuard, Metered, Unmetered};
+pub use activity::{
+    ActivityBuilder, ActivityGuard, ActivityId, ActivityStatus, Metered, Unmetered,
+};
 pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
 
-use crate::activity::AtomicActivityIdAllocator;
+use crate::activity::{ActivityEvent, ActivityEventReporter, AtomicActivityIdAllocator};
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
@@ -537,20 +539,37 @@ impl ExperimentRunHandle {
                 return ActivityBuilder::new(
                     Arc::new(|_| {}),
                     Arc::new(AtomicActivityIdAllocator::new()),
+                    CancelToken::new(),
                     name.into(),
                 );
             }
         };
         ActivityBuilder::new(
-            Arc::new({
-                let handle = self.clone();
-                move |e| {
-                    handle.record_event(Event::Activity(e)).ok();
-                }
+            Arc::new(RunActivityReporter {
+                handle: self.clone(),
             }),
             inner.activity_id_allocator.clone(),
+            self.cancel_token.clone(),
             name.into(),
         )
+    }
+}
+
+struct RunActivityReporter {
+    handle: ExperimentRunHandle,
+}
+
+impl ActivityEventReporter for RunActivityReporter {
+    fn report(&self, event: ActivityEvent) {
+        self.handle.record_event(Event::Activity(event)).ok();
+    }
+
+    fn register_cancellation(&self, id: ActivityId, token: CancelToken) {
+        self.handle.register_activity_cancellation(id, token).ok();
+    }
+
+    fn unregister_cancellation(&self, id: ActivityId) {
+        self.handle.unregister_activity_cancellation(id).ok();
     }
 }
 
@@ -559,6 +578,21 @@ impl ExperimentRunHandle {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
         inner.session.record_event(event)
+    }
+
+    fn register_activity_cancellation(
+        &self,
+        id: ActivityId,
+        token: CancelToken,
+    ) -> Result<(), ExperimentError> {
+        let inner = self.upgrade()?;
+        inner.ensure_active()?;
+        inner.session.register_activity_cancellation(id, token)
+    }
+
+    fn unregister_activity_cancellation(&self, id: ActivityId) -> Result<(), ExperimentError> {
+        let inner = self.upgrade()?;
+        inner.session.unregister_activity_cancellation(id)
     }
 
     fn upgrade(&self) -> Result<Arc<RunInner>, ExperimentError> {
