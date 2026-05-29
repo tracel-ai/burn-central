@@ -67,8 +67,6 @@ pub enum ActivityStatus {
     Success,
     /// The activity stopped before successful completion.
     Abandoned,
-    /// The activity stopped because cancellation was requested.
-    Cancelled,
 }
 
 /// Event emitted by an activity.
@@ -488,17 +486,6 @@ impl<State> ActivityGuard<State> {
         self.inner
             .finish_inner(ActivityStatus::Abandoned, Some(message.into()));
     }
-
-    /// Mark the activity as cancelled.
-    pub fn finish_cancelled(mut self) {
-        self.inner.finish_inner(ActivityStatus::Cancelled, None);
-    }
-
-    /// Mark the activity as cancelled with a message.
-    pub fn finish_cancelled_with_message(mut self, message: impl Into<String>) {
-        self.inner
-            .finish_inner(ActivityStatus::Cancelled, Some(message.into()));
-    }
 }
 
 impl ActivityGuard<Metered> {
@@ -701,22 +688,6 @@ mod tests {
             events.last(),
             Some(ActivityEvent::Finished {
                 status: ActivityStatus::Abandoned,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn cancelled_reports_cancelled_completion() {
-        let reporter = Arc::new(MockReporter::default());
-
-        builder(reporter.clone(), "node").start().finish_cancelled();
-
-        let events = reporter.events();
-        assert!(matches!(
-            events.last(),
-            Some(ActivityEvent::Finished {
-                status: ActivityStatus::Cancelled,
                 ..
             })
         ));

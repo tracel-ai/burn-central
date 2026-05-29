@@ -272,7 +272,6 @@ fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
             status: match status {
                 ActivityStatus::Success => ActivityStatusRequest::Success,
                 ActivityStatus::Abandoned => ActivityStatusRequest::Abandoned,
-                ActivityStatus::Cancelled => ActivityStatusRequest::Cancelled,
             },
             message,
         },
