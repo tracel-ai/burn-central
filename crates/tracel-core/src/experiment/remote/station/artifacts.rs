@@ -1,5 +1,5 @@
-use burn_central_client::StationClient;
 use tracel_artifact::bundle::FsBundle;
+use tracel_client::StationClient;
 
 use tracel_experiment::{
     ArtifactKind, ExperimentId,

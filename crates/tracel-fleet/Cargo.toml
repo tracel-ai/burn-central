@@ -12,7 +12,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-burn-central-client.workspace = true
+tracel-client.workspace = true
 tracel-inference.workspace = true
 tracel-artifact.workspace = true
 thiserror.workspace = true

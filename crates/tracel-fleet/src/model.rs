@@ -2,11 +2,11 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use burn_central_client::fleet::response::FleetModelDownloadResponse;
 use serde::{Deserialize, Serialize};
 use tracel_artifact::bundle::FsBundle;
 use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
 use tracel_artifact::normalize_checksum;
+use tracel_client::fleet::response::FleetModelDownloadResponse;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelCacheError {
@@ -247,11 +247,11 @@ fn write_manifest_if_changed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_central_client::fleet::response::FleetPresignedModelFileUrlResponse;
     use std::{
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+    use tracel_client::fleet::response::FleetPresignedModelFileUrlResponse;
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

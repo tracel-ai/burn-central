@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use burn_central_client::request::{
+use tracel_client::request::{
     MetricData, MetricDescriptorIngestionEvent, MetricIngestionEvent, MetricKind,
     TelemetryIngestionEvents,
 };
@@ -116,7 +116,7 @@ impl ShipperTransport for TracelFleetShipperTransport {
                 }
                 TelemetryData::Logs(l) => {
                     for log in l.entries {
-                        logs.push(burn_central_client::request::LogIngestionEvent {
+                        logs.push(tracel_client::request::LogIngestionEvent {
                             timestamp_ms: log.timestamp_unix_ms as _,
                             level: log.level,
                             message: log.message,

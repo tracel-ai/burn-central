@@ -6,13 +6,12 @@ use tracel_experiment::{
     ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, MetricSpec, MetricValue,
 };
 
-use burn_central_client::WebSocketClient;
-use burn_central_client::websocket::{
-    ActivityEventRequest, ActivityMeterRequest, ActivityRequest, ActivityStatusRequest,
-    ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
-};
 use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
+use tracel_client::WebSocketClient;
+use tracel_client::websocket::{
+    ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
+};
 
 use super::log_store::LogUploader;
 use super::log_store::TempLogStore;

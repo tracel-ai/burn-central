@@ -1,9 +1,9 @@
-use burn_central_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
-use burn_central_client::response::ArtifactResponse;
-use burn_central_client::websocket::WebSocketError;
-use burn_central_client::{Client, ClientError};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+use tracel_client::request::{ArtifactFileSpecRequest, CreateArtifactRequest};
+use tracel_client::response::ArtifactResponse;
+use tracel_client::websocket::WebSocketError;
+use tracel_client::{Client, ClientError};
 
 use tracel_artifact::bundle::FsBundle;
 use tracel_artifact::download::{ArtifactDownloadFile, DownloadError, download_artifacts_to_sink};
@@ -229,12 +229,10 @@ impl ExperimentProvider for CloudBackend {
         name: String,
         attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
         create_run(
             self.client.clone(),
             &self.namespace,
             &self.project,
-            digest,
             name,
             attributes,
         )
@@ -250,16 +248,15 @@ pub fn create_cloud_experiment_run(
     client: Client,
     namespace: &str,
     project_name: &str,
-    digest: String,
-    routine: String,
+    name: String,
+    attributes: HashMap<String, Value>,
 ) -> Result<ExperimentRun, Box<dyn std::error::Error + Send + Sync>> {
     Ok(create_run(
         client,
         namespace,
         project_name,
-        digest,
-        routine,
-        HashMap::new(),
+        name,
+        attributes,
     )?)
 }
 
@@ -267,19 +264,11 @@ fn create_run(
     client: Client,
     namespace: &str,
     project_name: &str,
-    digest: String,
-    routine: String,
-    mut attributes: HashMap<String, Value>,
+    name: String,
+    attributes: HashMap<String, Value>,
 ) -> Result<ExperimentRun, CloudError> {
-    attributes
-        .entry("code_version".to_string())
-        .or_insert(Value::String(digest));
-    attributes
-        .entry("routine".to_string())
-        .or_insert_with(|| Value::String(routine.clone()));
-
     let experiment =
-        client.create_experiment(namespace, project_name, Some(routine), None, attributes)?;
+        client.create_experiment(namespace, project_name, Some(name), None, attributes)?;
 
     let experiment_num = experiment.experiment_num;
     let path = ExperimentPath::new(namespace, project_name, experiment_num);

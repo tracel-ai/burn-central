@@ -360,21 +360,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-central-client"
-version = "0.7.0"
-dependencies = [
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "serde_with",
- "strum 0.27.2",
- "thiserror 2.0.18",
- "tracing",
- "tungstenite",
- "uuid",
-]
-
-[[package]]
 name = "burn-core"
 version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=78f10aec1ca6c6ffb1edd17a0fa131ae59ad5403#78f10aec1ca6c6ffb1edd17a0fa131ae59ad5403"
@@ -764,9 +749,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.63"
+version = "1.2.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556e016178bb5662a08681bbe0f00f8e17631781a4dfc8c45e466e4b185ec27f"
+checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3499,9 +3484,9 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "memchr"
-version = "2.8.1"
+version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
+checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "metrics"
@@ -5159,9 +5144,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 dependencies = [
  "serde",
 ]
@@ -5728,8 +5713,8 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracel"
 version = "0.6.0"
 dependencies = [
- "burn-central-client",
  "tracel-artifact",
+ "tracel-client",
  "tracel-core",
  "tracel-experiment",
  "tracel-fleet",
@@ -5751,10 +5736,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracel-client"
+version = "0.7.0"
+source = "git+https://github.com/tracel-ai/burn-central-client?rev=cea0a58fde9fdcf85de2c147dd361f92613d8d84#cea0a58fde9fdcf85de2c147dd361f92613d8d84"
+dependencies = [
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum 0.27.2",
+ "thiserror 2.0.18",
+ "tracing",
+ "tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "tracel-core"
 version = "0.6.0"
 dependencies = [
- "burn-central-client",
  "crossbeam",
  "directories",
  "serde",
@@ -5763,6 +5763,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
  "tracel-artifact",
+ "tracel-client",
  "tracel-experiment",
  "tracing",
  "url",
@@ -5787,7 +5788,6 @@ name = "tracel-fleet"
 version = "0.6.0"
 dependencies = [
  "arc-swap",
- "burn-central-client",
  "chrono",
  "crossbeam",
  "directories",
@@ -5801,6 +5801,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tracel-artifact",
+ "tracel-client",
  "tracel-inference",
  "tracing",
  "tracing-subscriber",
@@ -5894,7 +5895,6 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "burn",
- "burn-central-client",
  "clap",
  "derive_more",
  "json-patch",
@@ -5905,6 +5905,7 @@ dependencies = [
  "syn",
  "thiserror 2.0.18",
  "tracel-artifact",
+ "tracel-client",
  "tracel-core",
  "tracel-experiment",
  "tracel-fleet",
@@ -6355,9 +6356,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasip2"
-version = "1.0.3+wasi-0.2.9"
+version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20064672db26d7cdc89c7798c48a0fdfac8213434a1186e5ef29fd560ae223d6"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen 0.57.1",
 ]

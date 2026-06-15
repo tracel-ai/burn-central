@@ -37,8 +37,8 @@
 //!
 //! The `name` attribute is optional. If omitted, the function name is used.
 
-pub use burn_central_client::BurnCentralCredentials;
-pub use burn_central_client::Env;
+pub use tracel_client::Env;
+pub use tracel_client::TracelCredentials;
 
 /// Experiment tracking and management.
 pub mod experiment {
@@ -69,4 +69,6 @@ pub use tracel_fleet as fleet;
 #[doc(inline)]
 pub use tracel_artifact as artifact;
 
+pub use tracel_core::Connection;
 pub use tracel_core::Context;
+pub use tracel_core::ContextError;

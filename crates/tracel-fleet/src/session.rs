@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
-use burn_central_client::{Env, FleetClient};
 use directories::{BaseDirs, ProjectDirs};
+use tracel_client::{Env, FleetClient};
 
 use crate::{
     DeviceMetadata, FleetRegistrationToken, auth_client::AuthenticatedFleetClient,

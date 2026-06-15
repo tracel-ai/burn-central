@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use burn_central_client::{
+use tracel_client::{
     ClientError, FleetClient,
     request::TelemetryIngestionEvents,
     response::{

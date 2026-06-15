@@ -164,7 +164,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use burn_central_client::{Env, FleetClient};
+    use tracel_client::{Env, FleetClient};
 
     use crate::state::FleetState;
 

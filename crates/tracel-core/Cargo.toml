@@ -11,11 +11,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["station"]
-station = ["burn-central-client/station"]
+default = []
+station = ["tracel-client/station"]
 
 [dependencies]
-burn-central-client.workspace = true
+tracel-client.workspace = true
 tracel-experiment.workspace = true
 url.workspace = true
 thiserror.workspace = true

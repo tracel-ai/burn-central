@@ -11,7 +11,7 @@ type ExecutorRoutine = BoxedRoutine<ExecutionContext, (), ()>;
 
 /// The execution context for a routine, containing the necessary information to run it.
 pub struct ExecutionContext {
-    client: Option<burn_central_client::Client>,
+    client: Option<tracel_client::Client>,
     namespace: String,
     project: String,
     args_override: Option<serde_json::Value>,
@@ -47,7 +47,7 @@ impl ExecutionContext {
         &self.cancel_token
     }
 
-    pub fn client(&self) -> Option<&burn_central_client::Client> {
+    pub fn client(&self) -> Option<&tracel_client::Client> {
         self.client.as_ref()
     }
 
@@ -137,8 +137,8 @@ impl ExecutorBuilder {
 
     pub fn build(
         self,
-        credentials: impl Into<burn_central_client::BurnCentralCredentials>,
-        env: burn_central_client::Env,
+        credentials: impl Into<tracel_client::TracelCredentials>,
+        env: tracel_client::Env,
         namespace: impl Into<String>,
         project: impl Into<String>,
     ) -> Executor {
@@ -156,8 +156,8 @@ impl ExecutorBuilder {
 #[doc(hidden)]
 /// An executor that manages the execution of routines for different targets.
 pub struct Executor {
-    credentials: Option<burn_central_client::BurnCentralCredentials>,
-    env: Option<burn_central_client::Env>,
+    credentials: Option<tracel_client::TracelCredentials>,
+    env: Option<tracel_client::Env>,
     namespace: Option<String>,
     project: Option<String>,
     handlers: HashMap<TargetId, ExecutorRoutine>,
@@ -206,7 +206,7 @@ impl Executor {
 
         let client = match (&self.credentials, &self.env) {
             (Some(creds), Some(env)) => Some(
-                burn_central_client::Client::new(env.clone(), creds)
+                tracel_client::Client::new(env.clone(), creds)
                     .map_err(|e| RuntimeError::ClientInitializationFailed(e.to_string()))?,
             ),
             _ => None,
@@ -222,7 +222,7 @@ impl Executor {
         };
 
         if let Some(client) = &ctx.client {
-            let code_version = option_env!("BURN_CENTRAL_CODE_VERSION")
+            let code_version = option_env!("TRACEL_CODE_VERSION")
                 .unwrap_or("unknown")
                 .to_string();
             log::debug!("Using Burn Central client with code version: {code_version}");
@@ -239,7 +239,7 @@ impl Executor {
                 &ctx.namespace,
                 &ctx.project,
                 code_version,
-                routine.to_string(),
+                HashMap::new(),
             )
             .map_err(|e| {
                 tracel_experiment::error::ExperimentError::with_source(

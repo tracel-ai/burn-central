@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use burn_central_client::{BurnCentralCredentials, Client, ClientError, Env};
 use serde::Deserialize;
+use tracel_client::{Client, ClientError, Env, TracelCredentials};
 
 const TRACEL_ENV: &str = "TRACEL_ENV";
 const TRACEL_PROJECT: &str = "TRACEL_PROJECT";
@@ -69,8 +69,8 @@ impl CloudBackend {
     }
 }
 
-fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, CloudError> {
-    if let Ok(creds) = BurnCentralCredentials::from_env() {
+fn discover_credentials(env: &Env) -> Result<TracelCredentials, CloudError> {
+    if let Ok(creds) = TracelCredentials::from_env() {
         return Ok(creds);
     }
 
@@ -88,7 +88,7 @@ fn discover_credentials(env: &Env) -> Result<BurnCentralCredentials, CloudError>
         let contents = std::fs::read_to_string(path).map_err(|_| CloudError::NoCredentials)?;
         let creds: CliCredentials =
             serde_json::from_str(&contents).map_err(|_| CloudError::NoCredentials)?;
-        return Ok(BurnCentralCredentials::new(creds.api_key));
+        return Ok(TracelCredentials::new(creds.api_key));
     }
 
     Err(CloudError::NoCredentials)

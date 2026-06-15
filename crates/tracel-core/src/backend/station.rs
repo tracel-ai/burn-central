@@ -1,4 +1,4 @@
-use burn_central_client::StationClient;
+use tracel_client::StationClient;
 use url::Url;
 
 #[derive(Debug, Clone)]

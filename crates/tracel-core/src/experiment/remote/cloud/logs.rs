@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use burn_central_client::{
-    Client, ClientError,
-    request::{ArtifactFileSpecRequest, CreateArtifactRequest},
-};
 use sha2::Digest;
 use tracel_artifact::{
     bundle::InMemoryBundleSources,
     upload::{MultipartUploadFile, MultipartUploadPart, upload_bundle_multipart},
+};
+use tracel_client::{
+    Client, ClientError,
+    request::{ArtifactFileSpecRequest, CreateArtifactRequest},
 };
 
 use crate::experiment::remote::log_store::{LogStoreError, LogUploader};

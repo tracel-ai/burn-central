@@ -13,10 +13,10 @@ pub struct TracelArgs {
     #[arg(long)]
     pub api_key: String,
     #[arg(long, default_value = "Development", value_parser = serde_env_parser)]
-    pub env: burn_central_client::Env,
+    pub env: tracel_client::Env,
 }
 
-fn serde_env_parser(s: &str) -> Result<burn_central_client::Env, String> {
+fn serde_env_parser(s: &str) -> Result<tracel_client::Env, String> {
     serde_json::from_str(s).map_err(|e| format!("Failed to parse env: {e}"))
 }
 
@@ -52,7 +52,7 @@ mod test {
 
     #[test]
     fn test_parse_runtime_args() {
-        let env = serde_json::to_string(&burn_central_client::Env::Production).unwrap();
+        let env = serde_json::to_string(&tracel_client::Env::Production).unwrap();
         let args = vec![
             "tracel-runtime",
             "train",
