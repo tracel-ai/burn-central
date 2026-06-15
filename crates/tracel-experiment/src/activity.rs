@@ -5,15 +5,15 @@
 //! and explicit or drop-based completion emits [`ActivityEvent::Finished`].
 
 use std::{
-    collections::HashMap,
     num::NonZeroU64,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
 
 use crate::cancellation::CancelToken;
+use crate::control::ExperimentRunControl;
 
 /// Opaque non-zero identifier for an activity.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -107,12 +107,6 @@ pub enum ActivityEvent {
 pub trait ActivityEventReporter: Send + Sync {
     /// Report one activity event.
     fn report(&self, event: ActivityEvent);
-
-    /// Register a cancellable activity token with the active backend session.
-    fn register_cancellation(&self, _id: ActivityId, _token: CancelToken) {}
-
-    /// Unregister a cancellable activity token from the active backend session.
-    fn unregister_cancellation(&self, _id: ActivityId) {}
 }
 
 impl<F> ActivityEventReporter for F
@@ -121,32 +115,6 @@ where
 {
     fn report(&self, event: ActivityEvent) {
         self(event);
-    }
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct ActivityCancellationRegistry {
-    tokens: Mutex<HashMap<ActivityId, CancelToken>>,
-}
-
-impl ActivityCancellationRegistry {
-    pub(crate) fn register(&self, id: ActivityId, token: CancelToken) {
-        self.tokens.lock().unwrap().insert(id, token);
-    }
-
-    pub(crate) fn unregister(&self, id: ActivityId) {
-        self.tokens.lock().unwrap().remove(&id);
-    }
-
-    pub(crate) fn cancel(&self, id: ActivityId) -> bool {
-        let token = self.tokens.lock().unwrap().get(&id).cloned();
-
-        if let Some(token) = token {
-            token.cancel();
-            true
-        } else {
-            false
-        }
     }
 }
 
@@ -203,6 +171,7 @@ pub struct Metered {
 pub struct ActivityBuilder<State = Unmetered> {
     reporter: Arc<dyn ActivityEventReporter>,
     id_allocator: Arc<dyn ActivityIdAllocator>,
+    control: ExperimentRunControl,
     cancellation_parent: CancelToken,
     parent: Option<ActivityId>,
     name: String,
@@ -216,12 +185,15 @@ impl ActivityBuilder<Unmetered> {
     pub(crate) fn new(
         reporter: Arc<dyn ActivityEventReporter>,
         id_allocator: Arc<dyn ActivityIdAllocator>,
-        cancellation_parent: CancelToken,
+        control: ExperimentRunControl,
         name: impl Into<String>,
     ) -> Self {
+        let cancellation_parent = control.cancel_token();
+
         Self {
             reporter,
             id_allocator,
+            control,
             cancellation_parent,
             parent: None,
             name: name.into(),
@@ -236,6 +208,7 @@ impl ActivityBuilder<Unmetered> {
         let ActivityBuilder {
             reporter,
             id_allocator,
+            control,
             cancellation_parent,
             parent,
             name,
@@ -247,6 +220,7 @@ impl ActivityBuilder<Unmetered> {
         ActivityBuilder {
             reporter,
             id_allocator,
+            control: control,
             cancellation_parent,
             parent,
             name,
@@ -352,11 +326,17 @@ impl<State> ActivityBuilder<State> {
         });
 
         if activity.cancellable {
-            self.reporter
-                .register_cancellation(activity.id, cancel_token.clone());
+            self.control
+                .register_activity_cancellation(activity.id, cancel_token.clone());
         }
 
-        ActiveActivity::new(self.reporter, self.id_allocator, activity, cancel_token)
+        ActiveActivity::new(
+            self.reporter,
+            self.id_allocator,
+            self.control,
+            activity,
+            cancel_token,
+        )
     }
 }
 
@@ -364,6 +344,7 @@ impl<State> ActivityBuilder<State> {
 struct ActiveActivity {
     reporter: Arc<dyn ActivityEventReporter>,
     id_allocator: Arc<dyn ActivityIdAllocator>,
+    control: ExperimentRunControl,
     activity: Activity,
     cancel_token: CancelToken,
     finished: bool,
@@ -374,12 +355,14 @@ impl ActiveActivity {
     fn new(
         reporter: Arc<dyn ActivityEventReporter>,
         id_allocator: Arc<dyn ActivityIdAllocator>,
+        control: ExperimentRunControl,
         activity: Activity,
         cancel_token: CancelToken,
     ) -> Self {
         Self {
             reporter,
             id_allocator,
+            control,
             activity,
             cancel_token,
             finished: false,
@@ -391,6 +374,7 @@ impl ActiveActivity {
         ActivityBuilder {
             reporter: self.reporter.clone(),
             id_allocator: self.id_allocator.clone(),
+            control: self.control.clone(),
             cancellation_parent: self.cancel_token.clone(),
             parent: Some(self.activity.id),
             name: name.into(),
@@ -419,7 +403,10 @@ impl ActiveActivity {
             status,
             message,
         });
-        self.reporter.unregister_cancellation(self.activity.id);
+        if self.activity.cancellable {
+            self.control
+                .unregister_activity_cancellation(self.activity.id);
+        }
     }
 }
 
@@ -449,8 +436,8 @@ impl<State> ActivityGuard<State> {
     /// Return whether cancellation has been requested for this activity.
     ///
     /// This is a cooperative signal inherited from the run or parent activity. It does not force
-    /// the activity's terminal status; call [`Self::finish_cancelled`] when the activity actually
-    /// stops because of the request.
+    /// the activity's terminal status; abandon or finish the activity when it actually stops
+    /// because of the request.
     pub fn is_cancel_requested(&self) -> bool {
         self.inner.cancel_token.is_cancelled()
     }
@@ -538,7 +525,7 @@ mod tests {
         ActivityBuilder::new(
             reporter,
             Arc::new(AtomicActivityIdAllocator::new()),
-            CancelToken::new(),
+            ExperimentRunControl::default(),
             name.to_string(),
         )
         .progress()
@@ -573,7 +560,7 @@ mod tests {
         let _guard = ActivityBuilder::new(
             reporter.clone(),
             Arc::new(AtomicActivityIdAllocator::new()),
-            CancelToken::new(),
+            ExperimentRunControl::default(),
             "epoch",
         )
         .start();
@@ -661,6 +648,23 @@ mod tests {
             panic!("unexpected event: {:?}", events[0]);
         };
         assert!(activity.cancellable);
+    }
+
+    #[test]
+    fn cancellable_activity_registers_with_control() {
+        let reporter = Arc::new(MockReporter::default());
+        let control = ExperimentRunControl::default();
+        let guard = ActivityBuilder::new(
+            reporter,
+            Arc::new(AtomicActivityIdAllocator::new()),
+            control.clone(),
+            "node",
+        )
+        .cancellable()
+        .start();
+
+        assert!(control.cancel_activity(guard.id()));
+        assert!(guard.is_cancel_requested());
     }
 
     #[test]

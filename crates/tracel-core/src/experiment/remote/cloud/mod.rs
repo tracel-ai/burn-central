@@ -19,7 +19,7 @@ pub use logs::ConsoleLogUploader;
 
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
+use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
 
 use tracel_experiment::ExperimentProvider;
 
@@ -227,7 +227,7 @@ impl ExperimentProvider for CloudBackend {
     fn create_experiment(
         &self,
         name: String,
-        _attributes: HashMap<String, Value>,
+        attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
         let digest = "46523358ec1646354ddab1cd8b93f2b920b44b24a26ea86c129d666d6bae2a5f".to_string();
         create_run(
@@ -236,6 +236,7 @@ impl ExperimentProvider for CloudBackend {
             &self.project,
             digest,
             name,
+            attributes,
         )
         .map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
@@ -258,6 +259,7 @@ pub fn create_cloud_experiment_run(
         project_name,
         digest,
         routine,
+        HashMap::new(),
     )?)
 }
 
@@ -267,12 +269,22 @@ fn create_run(
     project_name: &str,
     digest: String,
     routine: String,
+    mut attributes: HashMap<String, Value>,
 ) -> Result<ExperimentRun, CloudError> {
-    let experiment = client.create_experiment(namespace, project_name, None, digest, routine)?;
+    attributes
+        .entry("code_version".to_string())
+        .or_insert(Value::String(digest));
+    attributes
+        .entry("routine".to_string())
+        .or_insert_with(|| Value::String(routine.clone()));
+
+    let experiment =
+        client.create_experiment(namespace, project_name, Some(routine), None, attributes)?;
 
     let experiment_num = experiment.experiment_num;
     let path = ExperimentPath::new(namespace, project_name, experiment_num);
     let cancel_token = CancelToken::new();
+    let control = ExperimentRunControl::new(cancel_token.clone());
 
     let log_uploader = ConsoleLogUploader::new(client.clone(), path.clone());
     let artifact_uploader = ConsoleArtifactUploader::new(client.clone(), path.clone());
@@ -283,11 +295,13 @@ fn create_run(
         Box::new(log_uploader),
         Box::new(artifact_uploader),
         ws,
-        cancel_token.clone(),
+        control.clone(),
     );
 
     let reader = ConsoleArtifactReader::new(client, path);
     let id = ExperimentId::from(format!("{}", experiment_num));
 
-    Ok(ExperimentRun::new(id, session, reader, cancel_token))
+    Ok(ExperimentRun::new_with_control(
+        id, session, reader, control,
+    ))
 }

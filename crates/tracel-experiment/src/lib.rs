@@ -25,6 +25,7 @@ use serde::Serialize;
 mod activity;
 mod cancellation;
 mod context;
+mod control;
 mod provider;
 pub mod reader;
 pub mod session;
@@ -33,24 +34,21 @@ pub mod error;
 pub mod integration;
 
 pub use activity::{
-    ActivityBuilder, ActivityGuard, ActivityId, ActivityStatus, Metered, Unmetered,
+    Activity, ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, ActivityMeter,
+    ActivityStatus, Metered, Unmetered,
 };
 pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
+pub use control::ExperimentRunControl;
+pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 
-use crate::activity::{ActivityEvent, ActivityEventReporter, AtomicActivityIdAllocator};
+use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
 use crate::error::{ExperimentError, ExperimentErrorKind};
 use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
 use crate::reader::ExperimentArtifactReader;
 use crate::session::{Event, ExperimentCompletion, ExperimentSession};
-pub use cancellation::{CancelToken, Cancellable};
-pub use context::{
-    CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
-};
-pub use progress::{ProgressBuilder, ProgressGuard};
-pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
 
 /// Opaque identifier for an experiment run.
 ///
@@ -180,11 +178,11 @@ pub struct ExperimentRun {
 pub struct ExperimentRunHandle {
     metadata: ExperimentMetadata,
     inner: Weak<RunInner>,
-    cancel_token: CancelToken,
+    control: ExperimentRunControl,
 }
 
 struct RunInner {
-    cancel_token: CancelToken,
+    control: ExperimentRunControl,
     state: Mutex<RunState>,
     session: Box<dyn ExperimentSession>,
     reader: Box<dyn ExperimentArtifactReader>,
@@ -212,9 +210,26 @@ impl ExperimentRun {
         S: ExperimentSession + 'static,
         R: ExperimentArtifactReader + 'static,
     {
+        Self::new_with_control(id, session, reader, ExperimentRunControl::new(cancel_token))
+    }
+
+    /// Create a run from backend-specific implementations and an existing control plane.
+    ///
+    /// Remote backends use this constructor when their socket/control task must receive server
+    /// control messages before the run object is returned to user code.
+    pub fn new_with_control<S, R>(
+        id: impl Into<ExperimentId>,
+        session: S,
+        reader: R,
+        control: ExperimentRunControl,
+    ) -> Self
+    where
+        S: ExperimentSession + 'static,
+        R: ExperimentArtifactReader + 'static,
+    {
         let metadata = ExperimentMetadata { id: id.into() };
         let inner = Arc::new(RunInner {
-            cancel_token: cancel_token.clone(),
+            control: control.clone(),
             state: Mutex::new(RunState::Active),
             session: Box::new(session),
             reader: Box::new(reader),
@@ -224,7 +239,7 @@ impl ExperimentRun {
         let handle = ExperimentRunHandle {
             metadata,
             inner: Arc::downgrade(&inner),
-            cancel_token,
+            control,
         };
         let tracing_registration = TracingRegistry::global().register_handle(handle.clone());
 
@@ -240,7 +255,7 @@ impl ExperimentRun {
     /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
     /// tasks and adapters.
     pub fn cancel_token(&self) -> CancelToken {
-        self.inner.cancel_token.clone()
+        self.inner.control.cancel_token()
     }
 
     /// Signal that the experiment run has been cancelled.
@@ -249,7 +264,7 @@ impl ExperimentRun {
     /// dropped without an explicit completion, it will be marked as cancelled.
     pub fn cancel(&self) -> Result<(), ExperimentError> {
         self.inner.ensure_active()?;
-        self.inner.cancel_token.cancel();
+        self.inner.control.cancel_run();
         Ok(())
     }
 
@@ -396,7 +411,7 @@ impl ExperimentRunHandle {
     /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
     /// tasks and adapters.
     pub fn cancel_token(&self) -> CancelToken {
-        self.cancel_token.clone()
+        self.control.cancel_token()
     }
 
     /// See [`ExperimentRun::log_args`].
@@ -539,7 +554,7 @@ impl ExperimentRunHandle {
                 return ActivityBuilder::new(
                     Arc::new(|_| {}),
                     Arc::new(AtomicActivityIdAllocator::new()),
-                    CancelToken::new(),
+                    ExperimentRunControl::default(),
                     name.into(),
                 );
             }
@@ -549,7 +564,7 @@ impl ExperimentRunHandle {
                 handle: self.clone(),
             }),
             inner.activity_id_allocator.clone(),
-            self.cancel_token.clone(),
+            self.control.clone(),
             name.into(),
         )
     }
@@ -563,14 +578,6 @@ impl ActivityEventReporter for RunActivityReporter {
     fn report(&self, event: ActivityEvent) {
         self.handle.record_event(Event::Activity(event)).ok();
     }
-
-    fn register_cancellation(&self, id: ActivityId, token: CancelToken) {
-        self.handle.register_activity_cancellation(id, token).ok();
-    }
-
-    fn unregister_cancellation(&self, id: ActivityId) {
-        self.handle.unregister_activity_cancellation(id).ok();
-    }
 }
 
 impl ExperimentRunHandle {
@@ -578,21 +585,6 @@ impl ExperimentRunHandle {
         let inner = self.upgrade()?;
         inner.ensure_active()?;
         inner.session.record_event(event)
-    }
-
-    fn register_activity_cancellation(
-        &self,
-        id: ActivityId,
-        token: CancelToken,
-    ) -> Result<(), ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.ensure_active()?;
-        inner.session.register_activity_cancellation(id, token)
-    }
-
-    fn unregister_activity_cancellation(&self, id: ActivityId) -> Result<(), ExperimentError> {
-        let inner = self.upgrade()?;
-        inner.session.unregister_activity_cancellation(id)
     }
 
     fn upgrade(&self) -> Result<Arc<RunInner>, ExperimentError> {
@@ -634,7 +626,7 @@ impl RunInner {
 /// Finalize the run on drop if it has not already been completed.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
-        let completion = if self.inner.cancel_token.is_cancelled() {
+        let completion = if self.inner.control.is_run_cancelled() {
             ExperimentCompletion::Cancelled
         } else {
             ExperimentCompletion::Success

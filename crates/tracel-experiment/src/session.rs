@@ -3,10 +3,8 @@ use std::sync::Arc;
 use tracel_artifact::bundle::FsBundle;
 
 use crate::{
-    ArtifactKind, CancelToken, ExperimentId, MetricSpec, MetricValue,
-    activity::{ActivityEvent, ActivityId},
-    error::ExperimentError,
-    reader::ArtifactRef,
+    ArtifactKind, ExperimentId, MetricSpec, MetricValue, activity::ActivityEvent,
+    error::ExperimentError, reader::ArtifactRef,
 };
 
 #[derive(Debug, Clone)]
@@ -56,16 +54,6 @@ pub type BundleFn<'a> = dyn FnOnce(&mut FsBundle) -> Result<(), ExperimentError>
 /// Session-level implementation for the active experiment run.
 pub trait ExperimentSession: Send + Sync {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError>;
-    fn register_activity_cancellation(
-        &self,
-        _id: ActivityId,
-        _token: CancelToken,
-    ) -> Result<(), ExperimentError> {
-        Ok(())
-    }
-    fn unregister_activity_cancellation(&self, _id: ActivityId) -> Result<(), ExperimentError> {
-        Ok(())
-    }
     fn save_artifact(
         &self,
         name: &str,
@@ -81,18 +69,6 @@ where
 {
     fn record_event(&self, event: Event) -> Result<(), ExperimentError> {
         self.as_ref().record_event(event)
-    }
-
-    fn register_activity_cancellation(
-        &self,
-        id: ActivityId,
-        token: CancelToken,
-    ) -> Result<(), ExperimentError> {
-        self.as_ref().register_activity_cancellation(id, token)
-    }
-
-    fn unregister_activity_cancellation(&self, id: ActivityId) -> Result<(), ExperimentError> {
-        self.as_ref().unregister_activity_cancellation(id)
     }
 
     fn save_artifact(

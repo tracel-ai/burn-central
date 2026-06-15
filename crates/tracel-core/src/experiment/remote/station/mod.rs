@@ -23,7 +23,7 @@ use burn_central_client::station::experiment::CreateExperimentRequest;
 use serde_json::Value;
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
+use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
 
 use tracel_experiment::ExperimentProvider;
 
@@ -211,9 +211,9 @@ impl ExperimentProvider for StationBackend {
     fn create_experiment(
         &self,
         name: String,
-        _attributes: HashMap<String, Value>,
+        attributes: HashMap<String, Value>,
     ) -> Result<ExperimentRun, ExperimentError> {
-        create_run(self.client.clone(), name).map_err(|e| ExperimentError {
+        create_run(self.client.clone(), name, attributes).map_err(|e| ExperimentError {
             kind: ExperimentErrorKind::Internal,
             message: "Failed to start Station experiment run".to_string(),
             source: Some(Box::new(e)),
@@ -221,16 +221,22 @@ impl ExperimentProvider for StationBackend {
     }
 }
 
-fn create_run(client: StationClient, routine: String) -> Result<ExperimentRun, StationError> {
+fn create_run(
+    client: StationClient,
+    name: String,
+    attributes: HashMap<String, Value>,
+) -> Result<ExperimentRun, StationError> {
     let experiments_client = client.experiments();
     let experiment = experiments_client.create(CreateExperimentRequest {
+        name: Some(name),
         description: None,
-        routine_run: routine,
+        attributes,
     })?;
 
     let experiment_num = experiment.experiment_num;
     let path = ExperimentPath::new(experiment_num);
     let cancel_token = CancelToken::new();
+    let control = ExperimentRunControl::new(cancel_token.clone());
 
     let log_uploader = StationLogUploader::new(client.clone(), path.clone());
     let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
@@ -241,11 +247,13 @@ fn create_run(client: StationClient, routine: String) -> Result<ExperimentRun, S
         Box::new(log_uploader),
         Box::new(artifact_uploader),
         ws,
-        cancel_token.clone(),
+        control.clone(),
     );
 
     let reader = StationArtifactReader::new(client);
     let id = ExperimentId::from(format!("{}", experiment_num));
 
-    Ok(ExperimentRun::new(id, session, reader, cancel_token))
+    Ok(ExperimentRun::new_with_control(
+        id, session, reader, control,
+    ))
 }

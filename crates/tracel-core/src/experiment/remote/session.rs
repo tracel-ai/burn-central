@@ -1,8 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use tracel_experiment::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
+use tracel_experiment::{
+    ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, MetricSpec, MetricValue,
+};
 
 use burn_central_client::WebSocketClient;
 use burn_central_client::websocket::{
@@ -16,11 +18,6 @@ use super::log_store::LogUploader;
 use super::log_store::TempLogStore;
 use super::socket::ExperimentSocket;
 use super::socket::ThreadError;
-use crate::error::{ExperimentError, ExperimentErrorKind};
-use crate::{
-    ArtifactKind, CancelToken, MetricSpec, MetricValue,
-    activity::{ActivityCancellationRegistry, ActivityEvent, ActivityId, ActivityStatus},
-};
 
 struct ActiveSession {
     sender: Sender<ExperimentMessage>,
@@ -49,7 +46,6 @@ pub type BoxedArtifactUploader = Box<dyn ArtifactUploader + Send + Sync>;
 pub struct RemoteExperimentSession {
     artifact_uploader: BoxedArtifactUploader,
     active: Mutex<Option<ActiveSession>>,
-    activity_cancellations: Arc<ActivityCancellationRegistry>,
 }
 
 impl RemoteExperimentSession {
@@ -57,23 +53,15 @@ impl RemoteExperimentSession {
         log_uploader: Box<dyn LogUploader + Send>,
         artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
         websocket: WebSocketClient,
-        cancel_token: CancelToken,
+        control: ExperimentRunControl,
     ) -> Self {
         let log_store = TempLogStore::new(log_uploader);
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let activity_cancellations = Arc::new(ActivityCancellationRegistry::default());
-        let socket = ExperimentSocket::new(
-            websocket,
-            log_store,
-            receiver,
-            cancel_token,
-            activity_cancellations.clone(),
-        );
+        let socket = ExperimentSocket::new(websocket, log_store, receiver, control);
 
         Self {
             artifact_uploader,
             active: Mutex::new(Some(ActiveSession { sender, socket })),
-            activity_cancellations,
         }
     }
 
@@ -144,20 +132,6 @@ impl ExperimentSession for RemoteExperimentSession {
         };
 
         self.send(message)
-    }
-
-    fn register_activity_cancellation(
-        &self,
-        id: ActivityId,
-        token: CancelToken,
-    ) -> Result<(), ExperimentError> {
-        self.activity_cancellations.register(id, token);
-        Ok(())
-    }
-
-    fn unregister_activity_cancellation(&self, id: ActivityId) -> Result<(), ExperimentError> {
-        self.activity_cancellations.unregister(id);
-        Ok(())
     }
 
     fn save_artifact(
