@@ -1,7 +1,5 @@
 use crossbeam::channel::{Receiver, RecvTimeoutError};
-use crossbeam::channel::{Receiver, RecvTimeoutError};
 use std::num::NonZeroU64;
-use std::{thread::JoinHandle, time::Duration};
 use std::{thread::JoinHandle, time::Duration};
 use tracel_client::{
     WebSocketClient,
@@ -129,7 +127,6 @@ impl ExperimentThread {
                         );
                     }
                 }
-                Ok(Some(ServerMessage::ActivityCancelRequested { .. })) => {}
                 Ok(None) => {}
                 Err(e) => tracing::error!(error = ?e, "WebSocket receive error"),
             }

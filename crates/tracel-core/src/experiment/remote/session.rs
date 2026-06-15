@@ -10,6 +10,7 @@ use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
 use tracel_client::WebSocketClient;
 use tracel_client::websocket::{
+    ActivityEventRequest, ActivityMeterRequest, ActivityRequest, ActivityStatusRequest,
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
 };
 
