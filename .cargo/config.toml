@@ -1,5 +1,2 @@
 [alias]
 xtask = "run --target-dir target/xtask/debug --package xtask --bin xtask --"
-
-[patch.crates-io]
-tracel-client = { path = "../burn-central-client/tracel-client" }
