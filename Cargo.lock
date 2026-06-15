@@ -7369,7 +7369,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "tracel-client"
-version = "0.7.0"
