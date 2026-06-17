@@ -2,12 +2,15 @@ use std::sync::Mutex;
 
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
 use tracel_experiment::session::{BundleFn, Event, ExperimentCompletion, ExperimentSession};
-use tracel_experiment::{ArtifactKind, CancelToken, MetricSpec, MetricValue};
+use tracel_experiment::{
+    ActivityEvent, ActivityStatus, ArtifactKind, ExperimentRunControl, MetricSpec, MetricValue,
+};
 
 use crossbeam::channel::Sender;
 use tracel_artifact::bundle::FsBundle;
 use tracel_client::WebSocketClient;
 use tracel_client::websocket::{
+    ActivityEventRequest, ActivityMeterRequest, ActivityRequest, ActivityStatusRequest,
     ExperimentCompletion as RemoteExperimentCompletion, ExperimentMessage, InputUsed, MetricLog,
 };
 
@@ -50,11 +53,11 @@ impl RemoteExperimentSession {
         log_uploader: Box<dyn LogUploader + Send>,
         artifact_uploader: Box<dyn ArtifactUploader + Send + Sync>,
         websocket: WebSocketClient,
-        cancel_token: CancelToken,
+        control: ExperimentRunControl,
     ) -> Self {
         let log_store = TempLogStore::new(log_uploader);
         let (sender, receiver) = crossbeam::channel::unbounded();
-        let socket = ExperimentSocket::new(websocket, log_store, receiver, cancel_token);
+        let socket = ExperimentSocket::new(websocket, log_store, receiver, control);
 
         Self {
             artifact_uploader,
@@ -123,9 +126,8 @@ impl ExperimentSession for RemoteExperimentSession {
             } => ExperimentMessage::InputUsed(InputUsed::Artifact {
                 artifact_id: reference.id,
             }),
-            Event::Progress(_progress_event) => {
-                // TODO: Implement progress event forwarding to remote session
-                return Ok(());
+            Event::Activity(activity_event) => {
+                ExperimentMessage::Activity(to_remote_activity_event(activity_event))
             }
         };
 
@@ -210,6 +212,44 @@ fn to_remote_metric_logs(items: Vec<MetricValue>) -> Vec<MetricLog> {
             value: item.value,
         })
         .collect()
+}
+
+fn to_remote_activity_event(event: ActivityEvent) -> ActivityEventRequest {
+    match event {
+        ActivityEvent::Started { activity } => ActivityEventRequest::Started {
+            activity: ActivityRequest {
+                id: activity.id.as_u64(),
+                parent: activity.parent.map(|parent| parent.as_u64()),
+                name: activity.name,
+                cancellable: activity.cancellable,
+                meter: activity.meter.map(|meter| ActivityMeterRequest {
+                    unit: meter.unit,
+                    total: meter.total,
+                }),
+                attributes: activity.attributes,
+            },
+        },
+        ActivityEvent::Updated { id, current } => ActivityEventRequest::Updated {
+            id: id.as_u64(),
+            current,
+        },
+        ActivityEvent::Message { id, message } => ActivityEventRequest::Message {
+            id: id.as_u64(),
+            message,
+        },
+        ActivityEvent::Finished {
+            id,
+            status,
+            message,
+        } => ActivityEventRequest::Finished {
+            id: id.as_u64(),
+            status: match status {
+                ActivityStatus::Success => ActivityStatusRequest::Success,
+                ActivityStatus::Abandoned => ActivityStatusRequest::Abandoned,
+            },
+            message,
+        },
+    }
 }
 
 fn to_remote_completion(completion: ExperimentCompletion) -> RemoteExperimentCompletion {

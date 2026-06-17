@@ -1,11 +1,11 @@
 use crossbeam::channel::{Receiver, RecvTimeoutError};
+use std::num::NonZeroU64;
 use std::{thread::JoinHandle, time::Duration};
 use tracel_client::{
     WebSocketClient,
     websocket::{ExperimentMessage, ServerMessage},
 };
-
-use tracel_experiment::CancelToken;
+use tracel_experiment::{ActivityId, ExperimentRunControl};
 
 use super::log_store::{LogStoreError, TempLogStore};
 
@@ -28,7 +28,7 @@ struct ExperimentThread {
     ws_client: WebSocketClient,
     message_receiver: Receiver<ExperimentMessage>,
     log_store: TempLogStore,
-    cancel_token: CancelToken,
+    control: ExperimentRunControl,
 }
 
 impl ExperimentThread {
@@ -36,13 +36,13 @@ impl ExperimentThread {
         ws_client: WebSocketClient,
         message_receiver: Receiver<ExperimentMessage>,
         log_store: TempLogStore,
-        cancel_token: CancelToken,
+        control: ExperimentRunControl,
     ) -> Self {
         Self {
             ws_client,
             message_receiver,
             log_store,
-            cancel_token,
+            control,
         }
     }
 
@@ -107,9 +107,26 @@ impl ExperimentThread {
             match self.ws_client.receive::<ServerMessage>() {
                 Ok(Some(ServerMessage::CancelRequested)) => {
                     tracing::info!("Received server cancel request, triggering cancellation token");
-                    self.cancel_token.cancel();
+                    self.control.cancel_run();
                 }
-                Ok(Some(ServerMessage::ActivityCancelRequested { .. })) => {}
+                Ok(Some(ServerMessage::ActivityCancelRequested { id })) => {
+                    let Some(id) = NonZeroU64::new(id).map(ActivityId::new) else {
+                        tracing::warn!("Received activity cancellation request with id 0");
+                        continue;
+                    };
+
+                    if self.control.cancel_activity(id) {
+                        tracing::info!(
+                            activity_id = id.as_u64(),
+                            "Received activity cancel request"
+                        );
+                    } else {
+                        tracing::warn!(
+                            activity_id = id.as_u64(),
+                            "Received cancel request for unknown or non-cancellable activity"
+                        );
+                    }
+                }
                 Ok(None) => {}
                 Err(e) => tracing::error!(error = ?e, "WebSocket receive error"),
             }
@@ -134,9 +151,9 @@ impl ExperimentSocket {
         ws_client: WebSocketClient,
         log_store: TempLogStore,
         message_receiver: Receiver<ExperimentMessage>,
-        cancel_token: CancelToken,
+        control: ExperimentRunControl,
     ) -> Self {
-        let thread = ExperimentThread::new(ws_client, message_receiver, log_store, cancel_token);
+        let thread = ExperimentThread::new(ws_client, message_receiver, log_store, control);
         let handle = std::thread::spawn(move || thread.run());
         Self { handle }
     }

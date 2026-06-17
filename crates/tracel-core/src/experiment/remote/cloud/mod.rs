@@ -19,7 +19,7 @@ pub use logs::ConsoleLogUploader;
 
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
+use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
 
 use tracel_experiment::ExperimentProvider;
 
@@ -273,6 +273,7 @@ fn create_run(
     let experiment_num = experiment.experiment_num;
     let path = ExperimentPath::new(namespace, project_name, experiment_num);
     let cancel_token = CancelToken::new();
+    let control = ExperimentRunControl::new(cancel_token.clone());
 
     let log_uploader = ConsoleLogUploader::new(client.clone(), path.clone());
     let artifact_uploader = ConsoleArtifactUploader::new(client.clone(), path.clone());
@@ -283,11 +284,13 @@ fn create_run(
         Box::new(log_uploader),
         Box::new(artifact_uploader),
         ws,
-        cancel_token.clone(),
+        control.clone(),
     );
 
     let reader = ConsoleArtifactReader::new(client, path);
     let id = ExperimentId::from(format!("{}", experiment_num));
 
-    Ok(ExperimentRun::new(id, session, reader, cancel_token))
+    Ok(ExperimentRun::new_with_control(
+        id, session, reader, control,
+    ))
 }

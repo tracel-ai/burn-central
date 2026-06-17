@@ -23,7 +23,7 @@ use serde_json::Value;
 use tracel_client::station::experiment::CreateExperimentRequest;
 use tracel_experiment::ArtifactKind;
 use tracel_experiment::error::{ExperimentError, ExperimentErrorKind};
-use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun};
+use tracel_experiment::{CancelToken, ExperimentId, ExperimentRun, ExperimentRunControl};
 
 use tracel_experiment::ExperimentProvider;
 
@@ -236,6 +236,7 @@ fn create_run(
     let experiment_num = experiment.experiment_num;
     let path = ExperimentPath::new(experiment_num);
     let cancel_token = CancelToken::new();
+    let control = ExperimentRunControl::new(cancel_token.clone());
 
     let log_uploader = StationLogUploader::new(client.clone(), path.clone());
     let artifact_uploader = StationArtifactUploader::new(client.clone(), path);
@@ -246,11 +247,13 @@ fn create_run(
         Box::new(log_uploader),
         Box::new(artifact_uploader),
         ws,
-        cancel_token.clone(),
+        control.clone(),
     );
 
     let reader = StationArtifactReader::new(client);
     let id = ExperimentId::from(format!("{}", experiment_num));
 
-    Ok(ExperimentRun::new(id, session, reader, cancel_token))
+    Ok(ExperimentRun::new_with_control(
+        id, session, reader, control,
+    ))
 }

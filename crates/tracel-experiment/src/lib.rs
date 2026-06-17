@@ -22,9 +22,10 @@ use tracel_artifact::bundle::{BundleDecode, BundleEncode, FsBundle};
 
 use serde::Serialize;
 
+mod activity;
 mod cancellation;
 mod context;
-mod progress;
+mod control;
 mod provider;
 pub mod reader;
 pub mod session;
@@ -32,17 +33,22 @@ pub mod session;
 pub mod error;
 pub mod integration;
 
-use crate::error::{ExperimentError, ExperimentErrorKind};
-use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
-use crate::progress::AtomicProgressIdAllocator;
-use crate::reader::ExperimentArtifactReader;
-use crate::session::{Event, ExperimentCompletion, ExperimentSession};
+pub use activity::{
+    Activity, ActivityBuilder, ActivityEvent, ActivityGuard, ActivityId, ActivityMeter,
+    ActivityStatus, Metered, Unmetered,
+};
 pub use cancellation::{CancelToken, Cancellable};
 pub use context::{
     CurrentExperimentGuard, ExperimentGlobalExt, ExperimentInstrument, WithCurrentExperiment,
 };
-pub use progress::{ProgressBuilder, ProgressGuard};
+pub use control::ExperimentRunControl;
 pub use provider::{ExperimentFn, ExperimentJob, ExperimentModule, ExperimentProvider};
+
+use crate::activity::{ActivityEventReporter, AtomicActivityIdAllocator};
+use crate::error::{ExperimentError, ExperimentErrorKind};
+use crate::integration::tracing::registry::{TracingRegistration, TracingRegistry};
+use crate::reader::ExperimentArtifactReader;
+use crate::session::{Event, ExperimentCompletion, ExperimentSession};
 
 /// Opaque identifier for an experiment run.
 ///
@@ -172,15 +178,15 @@ pub struct ExperimentRun {
 pub struct ExperimentRunHandle {
     metadata: ExperimentMetadata,
     inner: Weak<RunInner>,
-    cancel_token: CancelToken,
+    control: ExperimentRunControl,
 }
 
 struct RunInner {
-    cancel_token: CancelToken,
+    control: ExperimentRunControl,
     state: Mutex<RunState>,
     session: Box<dyn ExperimentSession>,
     reader: Box<dyn ExperimentArtifactReader>,
-    progress_id_allocator: Arc<AtomicProgressIdAllocator>,
+    activity_id_allocator: Arc<AtomicActivityIdAllocator>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,19 +210,36 @@ impl ExperimentRun {
         S: ExperimentSession + 'static,
         R: ExperimentArtifactReader + 'static,
     {
+        Self::new_with_control(id, session, reader, ExperimentRunControl::new(cancel_token))
+    }
+
+    /// Create a run from backend-specific implementations and an existing control plane.
+    ///
+    /// Remote backends use this constructor when their socket/control task must receive server
+    /// control messages before the run object is returned to user code.
+    pub fn new_with_control<S, R>(
+        id: impl Into<ExperimentId>,
+        session: S,
+        reader: R,
+        control: ExperimentRunControl,
+    ) -> Self
+    where
+        S: ExperimentSession + 'static,
+        R: ExperimentArtifactReader + 'static,
+    {
         let metadata = ExperimentMetadata { id: id.into() };
         let inner = Arc::new(RunInner {
-            cancel_token: cancel_token.clone(),
+            control: control.clone(),
             state: Mutex::new(RunState::Active),
             session: Box::new(session),
             reader: Box::new(reader),
-            progress_id_allocator: Arc::new(AtomicProgressIdAllocator::new()),
+            activity_id_allocator: Arc::new(AtomicActivityIdAllocator::new()),
         });
 
         let handle = ExperimentRunHandle {
             metadata,
             inner: Arc::downgrade(&inner),
-            cancel_token,
+            control,
         };
         let tracing_registration = TracingRegistry::global().register_handle(handle.clone());
 
@@ -232,7 +255,7 @@ impl ExperimentRun {
     /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
     /// tasks and adapters.
     pub fn cancel_token(&self) -> CancelToken {
-        self.inner.cancel_token.clone()
+        self.inner.control.cancel_token()
     }
 
     /// Signal that the experiment run has been cancelled.
@@ -241,7 +264,7 @@ impl ExperimentRun {
     /// dropped without an explicit completion, it will be marked as cancelled.
     pub fn cancel(&self) -> Result<(), ExperimentError> {
         self.inner.ensure_active()?;
-        self.inner.cancel_token.cancel();
+        self.inner.control.cancel_run();
         Ok(())
     }
 
@@ -340,11 +363,12 @@ impl ExperimentRun {
         self.handle.use_artifact(experiment_id, name, settings)
     }
 
-    /// Create a progress builder for the run with the provided name.
+    /// Create an activity builder for the run with the provided name.
     ///
-    /// The returned builder can be used to start a progress node and receive a guard for updating and finishing it.
-    pub fn progress(&self, name: impl Into<String>) -> ProgressBuilder {
-        self.handle.progress(name)
+    /// Call [`ActivityBuilder::progress`] before starting when the activity should have a numeric
+    /// meter.
+    pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
+        self.handle.activity(name)
     }
 }
 
@@ -387,7 +411,7 @@ impl ExperimentRunHandle {
     /// Cancelling the token does not finish the run; it only broadcasts cancellation to linked
     /// tasks and adapters.
     pub fn cancel_token(&self) -> CancelToken {
-        self.cancel_token.clone()
+        self.control.cancel_token()
     }
 
     /// See [`ExperimentRun::log_args`].
@@ -520,30 +544,39 @@ impl ExperimentRunHandle {
         })
     }
 
-    /// See [`ExperimentRun::progress`].
+    /// See [`ExperimentRun::activity`].
     ///
-    /// If the originating run has already been finished or dropped, the progress builder will be a no-op.
-    pub fn progress(&self, name: impl Into<String>) -> ProgressBuilder {
+    /// If the originating run has already been finished or dropped, the activity builder will be a no-op.
+    pub fn activity(&self, name: impl Into<String>) -> ActivityBuilder {
         let inner = match self.upgrade() {
             Ok(inner) => inner,
             Err(_) => {
-                return ProgressBuilder::new(
+                return ActivityBuilder::new(
                     Arc::new(|_| {}),
-                    Arc::new(AtomicProgressIdAllocator::new()),
+                    Arc::new(AtomicActivityIdAllocator::new()),
+                    ExperimentRunControl::default(),
                     name.into(),
                 );
             }
         };
-        ProgressBuilder::new(
-            Arc::new({
-                let handle = self.clone();
-                move |e| {
-                    handle.record_event(Event::Progress(e)).ok();
-                }
+        ActivityBuilder::new(
+            Arc::new(RunActivityReporter {
+                handle: self.clone(),
             }),
-            inner.progress_id_allocator.clone(),
+            inner.activity_id_allocator.clone(),
+            self.control.clone(),
             name.into(),
         )
+    }
+}
+
+struct RunActivityReporter {
+    handle: ExperimentRunHandle,
+}
+
+impl ActivityEventReporter for RunActivityReporter {
+    fn report(&self, event: ActivityEvent) {
+        self.handle.record_event(Event::Activity(event)).ok();
     }
 }
 
@@ -593,7 +626,7 @@ impl RunInner {
 /// Finalize the run on drop if it has not already been completed.
 impl Drop for ExperimentRun {
     fn drop(&mut self) {
-        let completion = if self.inner.cancel_token.is_cancelled() {
+        let completion = if self.inner.control.is_run_cancelled() {
             ExperimentCompletion::Cancelled
         } else {
             ExperimentCompletion::Success
@@ -607,7 +640,7 @@ impl Drop for ExperimentRun {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::progress::ProgressEvent;
+    use crate::activity::ActivityEvent;
     use crate::reader::{ExperimentReaderError, LoadedArtifact};
     use crate::session::BundleFn;
 
@@ -733,27 +766,27 @@ mod tests {
     }
 
     #[test]
-    fn run_progress_start_records_progress_event() {
+    fn run_metered_activity_start_records_progress_event() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
 
-        let _progress = run.progress("load").start();
+        let _progress = run.activity("load").progress().start();
 
         let events = session.events.lock().unwrap();
         assert!(matches!(
             events.as_slice(),
-            [Event::Progress(ProgressEvent::Started { node })] if node.name == "load"
+            [Event::Activity(ActivityEvent::Started { activity })] if activity.name == "load"
         ));
     }
 
     #[test]
-    fn dropped_run_handle_progress_records_no_event() {
+    fn dropped_run_handle_activity_records_no_event() {
         let session = Arc::new(MockSession::default());
         let run = create_run(session.clone());
         let handle = run.handle();
         drop(run);
 
-        let _progress = handle.progress("late").start();
+        let _progress = handle.activity("late").progress().start();
 
         let events = session.events.lock().unwrap();
         assert!(events.is_empty());
