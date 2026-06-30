@@ -3,9 +3,9 @@ use std::error::Error;
 use crate::job_register::JobRegisterError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum CliError {
-    #[error("no job name given and no default registered")]
-    MissingDefault,
+pub enum ServerError {
+    #[error("server error: {0}")]
+    IoError(#[from] std::io::Error),
 
     #[error("unknown job '{name}'. Available: {}", available.join(", "))]
     UnknownJob {
@@ -20,14 +20,14 @@ pub enum CliError {
     ExecutionFailed(#[source] Box<dyn Error + Send + Sync>),
 }
 
-impl From<JobRegisterError> for CliError {
+impl From<JobRegisterError> for ServerError {
     fn from(err: JobRegisterError) -> Self {
         match err {
             JobRegisterError::UnknownJob { name, available } => {
-                CliError::UnknownJob { name, available }
+                ServerError::UnknownJob { name, available }
             }
-            JobRegisterError::ValidationFailed(e) => CliError::ValidationFailed(e),
-            JobRegisterError::ExecutionFailed(e) => CliError::ExecutionFailed(e),
+            JobRegisterError::ValidationFailed(e) => ServerError::ValidationFailed(e),
+            JobRegisterError::ExecutionFailed(e) => ServerError::ExecutionFailed(e),
         }
     }
 }

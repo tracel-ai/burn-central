@@ -7,13 +7,6 @@ on:
 
 jobs:
   # --------------------------------------------------------------------------------
-  tracel-macros:
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
-    with:
-      crate: tracel-macros
-    secrets:
-      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-  # --------------------------------------------------------------------------------
   tracel-inference:
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v1
     with:
@@ -80,7 +73,6 @@ jobs:
       - tracel-experiment
       - tracel-fleet
       - tracel-inference
-      - tracel-macros
       - tracel-app
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}

@@ -5,10 +5,11 @@ version.workspace = true
 publish = false
 
 [features]
-default = ["wgpu", "flex"]
+default = ["wgpu", "flex", "server"]
 flex = ["burn/flex"]
 wgpu = ["burn/wgpu"]
 cuda = ["burn/cuda"]
+server = ["tracel/server"]
 
 [dependencies]
 burn = { workspace = true, features = [

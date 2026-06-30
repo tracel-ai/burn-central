@@ -13,11 +13,11 @@ rust-version.workspace = true
 
 [features]
 default = []
+server = ["tracel-app/server"]
 station = ["tracel-core/station"]
 
 [dependencies]
-tracel-core = { workspace = true }
-tracel-macros.workspace = true
+tracel-core.workspace = true
 tracel-app.workspace = true
 tracel-experiment.workspace = true
 tracel-inference.workspace = true

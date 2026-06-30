@@ -47,10 +47,6 @@ pub mod experiment {
     pub use tracel_experiment::*;
 }
 
-/// Attribute macros for registering routines discoverable by the Tracel CLI.
-#[doc(inline)]
-pub use tracel_macros as macros;
-
 /// Inference contracts and adapters.
 #[doc(hidden)]
 #[doc(inline)]

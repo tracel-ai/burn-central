@@ -4,7 +4,7 @@
 
 [![Current Crates.io Version](https://img.shields.io/crates/v/burn-central)](https://crates.io/crates/burn-central)
 [![Minimum Supported Rust Version](https://img.shields.io/crates/msrv/burn-central)](https://crates.io/crates/burn-central)
-[![Test Status](https://github.com/tracel-ai/burn-central/actions/workflows/ci.yml/badge.svg)](https://github.com/tracel-ai/burn-central/actions/workflows/ci.yml)
+[![Test Status](https://github.com/tracel-ai/tracel/actions/workflows/ci.yml/badge.svg)](https://github.com/tracel-ai/burn-central/actions/workflows/ci.yml)
 ![license](https://shields.io/badge/license-MIT%2FApache--2.0-blue)
 
 ---
@@ -17,7 +17,7 @@ Tracel is a new way of using Burn. It aims at providing a central platform for e
 
 This repository contains the SDK associated with the project. It offers macros that help attach to your code and send training data to our application. To use this project you must first create an account on the [application](https://s1-central.burn.dev/).
 
-Also needed to use this is the new [burn-cli](https://github.com/tracel-ai/burn-central-cli).
+Also needed to use this is the new [burn-cli](https://github.com/tracel-ai/tracel-cli).
 
 ## Installation
 
@@ -104,13 +104,13 @@ let learner = LearnerBuilder::new(artifact_dir)
 
 ### 3. Run your training
 
-Once integrated, run your training using the [burn-cli](https://github.com/tracel-ai/burn-central-cli) to automatically track metrics, checkpoints, and logs on Burn Central.
+Once integrated, run your training using the [burn-cli](https://github.com/tracel-ai/tracel-cli) to automatically track metrics, checkpoints, and logs on Burn Central.
 
 ## Requirements
 
 - Rust 1.87.0 or higher
 - A Burn Central account (create one at [central.burn.dev](https://central.burn.dev/))
-- The [burn-cli](https://github.com/tracel-ai/burn-central-cli)
+- The [burn-cli](https://github.com/tracel-ai/tracel-cli)
 
 ## Contribution
 

@@ -10,6 +10,10 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+server = ["dep:axum", "dep:tokio"]
+
 [dependencies]
 clap.workspace = true
 tracel-experiment.workspace = true
@@ -17,3 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 json-patch.workspace = true
 thiserror.workspace = true
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true

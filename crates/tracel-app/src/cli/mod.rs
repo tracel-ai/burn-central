@@ -20,22 +20,22 @@ struct DefaultJob {
 #[derive(Default)]
 pub struct Cli {
     register: JobRegister,
-    default: Option<DefaultJob>,
+    default_job: Option<DefaultJob>,
 }
 
 impl Cli {
     pub fn new() -> Self {
         Self {
             register: JobRegister::new(),
-            default: None,
+            default_job: None,
         }
     }
 
     pub fn register<J, I, O, F>(mut self, job: J, mapper: F) -> Self
     where
-        J: Job<I, O> + 'static,
-        F: Mapper<I> + 'static,
-        I: 'static,
+        J: Job<I, O> + Send + Sync + 'static,
+        F: Mapper<I> + Send + Sync + 'static,
+        I: Send + 'static,
         O: 'static,
     {
         self.register = self.register.register(job, mapper);
@@ -44,11 +44,11 @@ impl Cli {
 
     pub fn default_job<J, I, O>(mut self, job: J, config: I) -> Self
     where
-        J: Job<I, O> + 'static,
-        I: 'static,
+        J: Job<I, O> + Send + Sync + 'static,
+        I: Send + 'static,
         O: 'static,
     {
-        self.default = Some(DefaultJob {
+        self.default_job = Some(DefaultJob {
             runner: Box::new(move || job.execute(config).map(|_| ())),
         });
         self
@@ -62,20 +62,13 @@ impl Cli {
     fn dispatch(self, job: Option<String>, config: Option<String>) -> Result<(), CliError> {
         match job {
             Some(job_name) => {
-                if !self.register.has_job(&job_name) {
-                    return Err(CliError::UnknownJob {
-                        name: job_name,
-                        available: self.register.job_names(),
-                    });
-                }
                 let config_str = config.unwrap_or_default();
-                self.register
-                    .dispatch(&job_name, &config_str)
-                    .map_err(CliError::JobError)
+                self.register.dispatch(&job_name, &config_str)?;
+                Ok(())
             }
             None => {
-                let d = self.default.ok_or(CliError::MissingDefault)?;
-                (d.runner)().map_err(CliError::JobError)
+                let d = self.default_job.ok_or(CliError::MissingDefault)?;
+                (d.runner)().map_err(CliError::ExecutionFailed)
             }
         }
     }
@@ -148,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_named_job_ok() {
+    fn given_registered_job_when_dispatching_named_job_then_return_ok() {
         let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::new());
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
@@ -157,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_named_job_unknown() {
+    fn given_unknown_job_name_when_dispatching_then_return_unknown_job_error() {
         let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::new());
 
         let result = cli.dispatch(Some("infer".into()), Some("{}".into()));
@@ -166,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_named_job_config_none_defaults_config_to_empty_string() {
+    fn given_no_config_when_dispatching_named_job_then_default_config_to_empty_string() {
         let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::new());
 
         let result = cli.dispatch(Some("train".into()), None);
@@ -175,25 +168,25 @@ mod tests {
     }
 
     #[test]
-    fn mapper_error_is_wrapped_in_job_error() {
+    fn given_mapper_error_when_dispatching_then_return_validation_failed_error() {
         let cli = Cli::new().register(FakeJob::new("train"), FakeMapper::failing());
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
 
-        assert!(matches!(result, Err(CliError::JobError(_))));
+        assert!(matches!(result, Err(CliError::ValidationFailed(_))));
     }
 
     #[test]
-    fn job_error_is_wrapped_in_job_error() {
+    fn given_job_error_when_dispatching_then_return_execution_failed_error() {
         let cli = Cli::new().register(FakeJob::failing("train"), FakeMapper::new());
 
         let result = cli.dispatch(Some("train".into()), Some("{}".into()));
 
-        assert!(matches!(result, Err(CliError::JobError(_))));
+        assert!(matches!(result, Err(CliError::ExecutionFailed(_))));
     }
 
     #[test]
-    fn dispatch_default_job_ok() {
+    fn given_default_job_when_dispatching_with_no_job_name_then_return_ok() {
         let cli = Cli::new().default_job(FakeJob::new("default"), "config".to_string());
 
         let result = cli.dispatch(None, None);
@@ -202,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_no_job_no_default() {
+    fn given_no_job_and_no_default_when_dispatching_then_return_missing_default_error() {
         let cli = Cli::new();
 
         let result = cli.dispatch(None, None);
@@ -211,16 +204,28 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_default_job_fails() {
+    fn given_failing_default_job_when_dispatching_then_return_execution_failed() {
         let cli = Cli::new().default_job(FakeJob::failing("default"), "config".to_string());
 
         let result = cli.dispatch(None, None);
 
-        assert!(matches!(result, Err(CliError::JobError(_))));
+        assert!(matches!(result, Err(CliError::ExecutionFailed(_))));
     }
 
     #[test]
-    fn dispatch_multiple_jobs_picks_correct_one() {
+    fn given_default_job_and_named_job_when_dispatching_named_job_then_run_registered_job_not_default()
+     {
+        let cli = Cli::new()
+            .register(FakeJob::new("train"), FakeMapper::new())
+            .default_job(FakeJob::failing("default"), "config".to_string());
+
+        let result = cli.dispatch(Some("train".into()), Some("{}".into()));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn given_multiple_registered_jobs_when_dispatching_by_name_then_run_correct_job() {
         let cli = Cli::new()
             .register(FakeJob::new("train"), FakeMapper::new())
             .register(FakeJob::new("infer"), FakeMapper::new());
@@ -232,7 +237,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "already registered")]
-    fn register_duplicate_job_panics() {
+    fn given_duplicate_job_name_when_registering_then_panic() {
         Cli::new()
             .register(FakeJob::new("train"), FakeMapper::new())
             .register(FakeJob::new("train"), FakeMapper::new());
